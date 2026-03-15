@@ -1,0 +1,12 @@
+body {
+  margin: 0;
+  font-family: "Manrope", "Poppins", "Segoe UI", "Tahoma", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: radial-gradient(circle at 20% 0%, #eef4ff 0%, #f7fafc 38%, #f2f5f9 100%);
+  color: #1f2937;
+}
+
+code {
+  font-family: "JetBrains Mono", "Cascadia Code", Consolas, "Courier New", monospace;
+}
