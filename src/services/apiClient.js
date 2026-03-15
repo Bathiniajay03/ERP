@@ -120,8 +120,8 @@ apiClient.interceptors.response.use(
 
     if (
       status === 401 &&
-      !url.includes("/smart-erp/auth/login") &&
-      !url.includes("/smart-erp/auth/verify-mfa")
+      !url.includes("/auth/login") &&
+      !url.includes("/api/auth/login")
     ) {
       localStorage.removeItem("erp_token");
       localStorage.removeItem("erp_role");
