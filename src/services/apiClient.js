@@ -84,57 +84,6 @@
 // export default apiClient;
 
 
-// import axios from "axios";
-
-// // Read from .env (Vercel or local)
-// const baseURL = (process.env.REACT_APP_API_BASE_URL || "").trim();
-
-// if (!baseURL) {
-//   console.error("REACT_APP_API_BASE_URL is not set");
-// }
-
-// const apiClient = axios.create({
-//   baseURL,                 // e.g. https://xxxx.ngrok-free.dev/api
-//   timeout: 15000,
-//   headers: {
-//     "Content-Type": "application/json",
-//     "ngrok-skip-browser-warning": "true" // avoid ngrok warning page
-//   }
-// });
-
-// // Add JWT token if present
-// apiClient.interceptors.request.use((config) => {
-//   const token = localStorage.getItem("erp_token");
-//   if (token) {
-//     config.headers.Authorization = `Bearer ${token}`;
-//   }
-//   return config;
-// });
-
-// // Handle 401 (logout)
-// apiClient.interceptors.response.use(
-//   (res) => res,
-//   (error) => {
-//     const status = error?.response?.status;
-//     const url = String(error?.config?.url || "").toLowerCase();
-
-//     if (
-//       status === 401 &&
-//       !url.includes("/smart-erp/auth/login") &&
-//       !url.includes("/smart-erp/auth/verify-mfa")
-//     ) {
-//       localStorage.removeItem("erp_token");
-//       localStorage.removeItem("erp_role");
-//       window.dispatchEvent(new Event("erp:unauthorized"));
-//     }
-
-//     return Promise.reject(error);
-//   }
-// );
-
-// export default apiClient;
-
-
 import axios from "axios";
 
 // Read from .env (Vercel or local)
@@ -145,28 +94,26 @@ if (!baseURL) {
 }
 
 const apiClient = axios.create({
-  baseURL: baseURL, // e.g. https://xxxx.ngrok-free.dev
+  baseURL,                 // e.g. https://xxxx.ngrok-free.dev/api
   timeout: 15000,
   headers: {
     "Content-Type": "application/json",
-    "ngrok-skip-browser-warning": "true"
+    "ngrok-skip-browser-warning": "true" // avoid ngrok warning page
   }
 });
 
-// Attach JWT token automatically
+// Add JWT token if present
 apiClient.interceptors.request.use((config) => {
   const token = localStorage.getItem("erp_token");
-
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
-
   return config;
 });
 
-// Handle unauthorized responses
+// Handle 401 (logout)
 apiClient.interceptors.response.use(
-  (response) => response,
+  (res) => res,
   (error) => {
     const status = error?.response?.status;
     const url = String(error?.config?.url || "").toLowerCase();
@@ -178,7 +125,6 @@ apiClient.interceptors.response.use(
     ) {
       localStorage.removeItem("erp_token");
       localStorage.removeItem("erp_role");
-
       window.dispatchEvent(new Event("erp:unauthorized"));
     }
 
@@ -187,3 +133,57 @@ apiClient.interceptors.response.use(
 );
 
 export default apiClient;
+
+
+// import axios from "axios";
+
+// // Read from .env (Vercel or local)
+// const baseURL = (process.env.REACT_APP_API_BASE_URL || "").trim();
+
+// if (!baseURL) {
+//   console.error("REACT_APP_API_BASE_URL is not set");
+// }
+
+// const apiClient = axios.create({
+//   baseURL: baseURL, // e.g. https://xxxx.ngrok-free.dev
+//   timeout: 15000,
+//   headers: {
+//     "Content-Type": "application/json",
+//     "ngrok-skip-browser-warning": "true"
+//   }
+// });
+
+// // Attach JWT token automatically
+// apiClient.interceptors.request.use((config) => {
+//   const token = localStorage.getItem("erp_token");
+
+//   if (token) {
+//     config.headers.Authorization = `Bearer ${token}`;
+//   }
+
+//   return config;
+// });
+
+// // Handle unauthorized responses
+// apiClient.interceptors.response.use(
+//   (response) => response,
+//   (error) => {
+//     const status = error?.response?.status;
+//     const url = String(error?.config?.url || "").toLowerCase();
+
+//     if (
+//       status === 401 &&
+//       !url.includes("/smart-erp/auth/login") &&
+//       !url.includes("/smart-erp/auth/verify-mfa")
+//     ) {
+//       localStorage.removeItem("erp_token");
+//       localStorage.removeItem("erp_role");
+
+//       window.dispatchEvent(new Event("erp:unauthorized"));
+//     }
+
+//     return Promise.reject(error);
+//   }
+// );
+
+// export default apiClient;
