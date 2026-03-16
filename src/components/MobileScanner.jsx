@@ -31,6 +31,7 @@ export default function MobileScanner() {
   const [status, setStatus] = useState({ type: '', text: '' });
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState([]);
+  const [dataLoaded, setDataLoaded] = useState(false);
   const lastScan = useRef({ barcode: '', timestamp: 0 });
 
   useEffect(() => {
@@ -86,16 +87,23 @@ export default function MobileScanner() {
         smartErpApi.stockItems(),
         smartErpApi.warehouses()
       ]);
-      setItems(Array.isArray(itemsRes.data) ? itemsRes.data : []);
+      const itemsData = Array.isArray(itemsRes.data) ? itemsRes.data : [];
       const whData = Array.isArray(whRes.data) ? whRes.data : [];
+      
+      setItems(itemsData);
       setWarehouses(whData);
+      
       if (whData.length > 0) {
-        setStockInData(prev => ({ ...prev, warehouseId: String(whData[0].id) }));
-        setStockOutData(prev => ({ ...prev, warehouseId: String(whData[0].id) }));
+        const firstWarehouseId = String(whData[0].id);
+        setStockInData(prev => ({ ...prev, warehouseId: firstWarehouseId }));
+        setStockOutData(prev => ({ ...prev, warehouseId: firstWarehouseId }));
       }
+      
+      setDataLoaded(true);
     } catch (error) {
       console.error('Failed to load initial data', error);
-      showStatus('error', 'Failed to load data');
+      showStatus('error', '❌ Failed to load warehouses and items');
+      setDataLoaded(true);
     }
   };
 
@@ -156,16 +164,17 @@ export default function MobileScanner() {
 
   const handleStockIn = async () => {
     if (!currentItem) {
-      showStatus('error', 'Scan item first');
+      showStatus('error', '⚠️ Please scan an item first');
       return;
     }
-    if (!stockInData.warehouseId) {
-      showStatus('error', 'Select warehouse');
+    if (!stockInData.warehouseId || stockInData.warehouseId === '') {
+      showStatus('error', '⚠️ Please select a warehouse');
+      focusInput();
       return;
     }
     const qty = Number(stockInData.quantity);
     if (!qty || qty <= 0) {
-      showStatus('error', 'Invalid quantity');
+      showStatus('error', '⚠️ Quantity must be greater than 0');
       return;
     }
 
@@ -189,16 +198,17 @@ export default function MobileScanner() {
 
   const handleStockOut = async () => {
     if (!currentItem) {
-      showStatus('error', 'Scan item first');
+      showStatus('error', '⚠️ Please scan an item first');
       return;
     }
-    if (!stockOutData.warehouseId) {
-      showStatus('error', 'Select warehouse');
+    if (!stockOutData.warehouseId || stockOutData.warehouseId === '') {
+      showStatus('error', '⚠️ Please select a warehouse');
+      focusInput();
       return;
     }
     const qty = Number(stockOutData.quantity);
     if (!qty || qty <= 0) {
-      showStatus('error', 'Invalid quantity');
+      showStatus('error', '⚠️ Quantity must be greater than 0');
       return;
     }
 
@@ -364,14 +374,25 @@ export default function MobileScanner() {
             <label style={styles.formLabel}>
               <span style={styles.labelText}>Warehouse *</span>
               <select
-                value={operationData.warehouseId}
-                onChange={(e) => setOperationData(prev => ({ ...prev, warehouseId: e.target.value }))}
+                value={operationData.warehouseId || ''}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value) {
+                    setOperationData(prev => ({ ...prev, warehouseId: value }));
+                  }
+                }}
                 style={styles.select}
               >
-                <option value="">Select Warehouse</option>
-                {warehouses.map((w) => (
-                  <option key={w.id} value={w.id}>{w.name}</option>
-                ))}
+                <option value="">-- Select Warehouse --</option>
+                {warehouses && warehouses.length > 0 ? (
+                  warehouses.map((w) => (
+                    <option key={w.id} value={String(w.id)}>
+                      {w.name}
+                    </option>
+                  ))
+                ) : (
+                  <option disabled>No warehouses available</option>
+                )}
               </select>
             </label>
 
