@@ -356,12 +356,7 @@ export default function Operations() {
       )}
 
       {activeTab === 'scanner' && (
-        <MobileScanner 
-          items={items}
-          warehouses={warehouses}
-          onStatus={showStatus}
-          onRefresh={fetchData}
-        />
+        <MobileScanner />
       )}
 
       {/* Serial Modal Placeholder Logic follows Bootstrap classes provided in original */}
