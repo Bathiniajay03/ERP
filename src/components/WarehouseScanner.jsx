@@ -1,30 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import {
-  BrowserMultiFormatReader,
-  BarcodeFormat,
-  DecodeHintType,
-  NotFoundException
-} from '@zxing/library';
 import { smartErpApi } from '../services/smartErpApi';
 
-const SCAN_COOLDOWN_MS = 2000;
-
-const hints = new Map();
-hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-  BarcodeFormat.CODE_128,
-  BarcodeFormat.CODE_39,
-  BarcodeFormat.QR_CODE,
-  BarcodeFormat.EAN_13,
-  BarcodeFormat.EAN_8,
-  BarcodeFormat.UPC_A,
-  BarcodeFormat.PDF_417
-]);
+const SCAN_COOLDOWN_MS = 1000;
 
 export default function WarehouseScanner() {
-  const videoRef = useRef(null);
-  const readerRef = useRef(null);
-  const statusTimeout = useRef(null);
-
+  const manualInputRef = useRef(null);
+  
   const [detectedBarcode, setDetectedBarcode] = useState('');
   const [currentItem, setCurrentItem] = useState(null);
   const [stockInfo, setStockInfo] = useState([]);
@@ -35,14 +16,12 @@ export default function WarehouseScanner() {
   const [serialNumbers, setSerialNumbers] = useState([]);
   const [status, setStatus] = useState({ type: '', text: '' });
   const [isSaving, setIsSaving] = useState(false);
+  const [items, setItems] = useState([]);
   const lastScan = useRef({ barcode: '', timestamp: 0 });
 
   const showStatus = (type, text) => {
     setStatus({ type, text });
-    if (statusTimeout.current) {
-      clearTimeout(statusTimeout.current);
-    }
-    statusTimeout.current = setTimeout(() => {
+    setTimeout(() => {
       setStatus({ type: '', text: '' });
     }, 4000);
   };
@@ -51,126 +30,93 @@ export default function WarehouseScanner() {
     try {
       const response = await smartErpApi.warehouses();
       const data = response.data || [];
-      setWarehouses(data);
+      setWarehouses(Array.isArray(data) ? data : []);
+      if (data.length > 0) {
+        setSelectedWarehouseId(String(data[0].id));
+      }
     } catch (error) {
       console.error('warehouse load failed', error);
       showStatus('error', 'Unable to load warehouses');
     }
   };
 
-  const mapWarehouseName = (warehouseId) => {
-    const wh = warehouses.find((w) => w.id === warehouseId);
-    return wh ? wh.name : 'Unknown';
+  const fetchItems = async () => {
+    try {
+      const response = await smartErpApi.stockItems();
+      setItems(Array.isArray(response.data) ? response.data : []);
+    } catch (error) {
+      console.error('items load failed', error);
+    }
   };
 
   useEffect(() => {
     fetchWarehouses();
-  }, []);
-
-  useEffect(() => {
-    if (warehouses.length && !selectedWarehouseId) {
-      setSelectedWarehouseId(String(warehouses[0].id));
-    }
-  }, [warehouses, selectedWarehouseId]);
-
-  useEffect(() => {
-    return () => {
-      if (statusTimeout.current) {
-        clearTimeout(statusTimeout.current);
-      }
-    };
+    fetchItems();
   }, []);
 
   const fetchItemDetails = async (barcode) => {
     setCurrentItem(null);
     setStockInfo([]);
     try {
-      const itemsRes = await smartErpApi.stockItems();
       const normalized = (barcode || '').trim().toLowerCase();
-      const match = (itemsRes.data || []).find(
+      
+      // Search in local items first
+      const match = items.find(
         (item) =>
           (item.barcode || '').toLowerCase() === normalized ||
           (item.itemCode || '').toLowerCase() === normalized
       );
+
       if (!match) {
-        showStatus('error', 'Item not found for scanned barcode');
+        showStatus('error', 'Item not found for barcode: ' + barcode);
         return;
       }
+
       setCurrentItem(match);
+      
       const inventoryRes = await smartErpApi.stockInventory();
       const filtered = (inventoryRes.data || []).filter(
         (record) => record.itemId === match.id
       );
       setStockInfo(filtered);
+      showStatus('success', `Found: ${match.itemCode} - ${match.description || ''}`);
     } catch (error) {
       console.error('fetch item failed', error);
       showStatus('error', 'Failed to load item details');
     }
   };
 
-  const handleScanResult = (code) => {
-    if (!code) return;
-    const now = Date.now();
-    if (
-      code === lastScan.current.barcode &&
-      now - lastScan.current.timestamp < SCAN_COOLDOWN_MS
-    ) {
-      return;
+  const handleBarcodeInput = (e) => {
+    const code = e.target.value.trim();
+    if (code && code.length > 0) {
+      const now = Date.now();
+      if (
+        code !== lastScan.current.barcode ||
+        now - lastScan.current.timestamp >= SCAN_COOLDOWN_MS
+      ) {
+        lastScan.current = { barcode: code, timestamp: now };
+        setDetectedBarcode(code);
+        fetchItemDetails(code);
+        e.target.value = '';
+      }
     }
-    lastScan.current = { barcode: code, timestamp: now };
-    setDetectedBarcode(code);
-    fetchItemDetails(code);
   };
 
-  useEffect(() => {
-    const reader = new BrowserMultiFormatReader(hints);
-    readerRef.current = reader;
-
-    const startScanner = async () => {
-      try {
-        // Request back camera specifically for barcode scanning
-        const constraints = { video: { facingMode: 'environment' } };
-        await navigator.mediaDevices.getUserMedia(constraints);
-
-        // Then enumerate video devices
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(device => device.kind === 'videoinput');
-
-        if (videoDevices.length === 0) {
-          throw new Error('No camera devices found');
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
         }
-
-        // Find the back camera device
-        const backCamera = videoDevices.find(device => 
-          device.label.toLowerCase().includes('back') || 
-          device.label.toLowerCase().includes('rear') ||
-          device.label.toLowerCase().includes('environment')
-        ) || videoDevices[videoDevices.length - 1]; // Fallback to last device which is often back camera
-
-        await reader.decodeFromVideoDevice(
-          backCamera.deviceId,
-          videoRef.current,
-          (result, error) => {
-            if (result) {
-              handleScanResult(result.getText());
-            } else if (error && !(error instanceof NotFoundException)) {
-              console.error('scan error', error);
-            }
-          }
-        );
-      } catch (error) {
-        console.error('camera init failed', error);
-        showStatus('error', `Unable to access camera: ${error.message}`);
-      }
-    };
-
-    startScanner();
-
-    return () => {
-      reader.reset();
-      readerRef.current = null;
-    };
-  }, []);
+      });
+      showStatus('success', 'Camera ready - type barcode or use device scanner');
+    } catch (err) {
+      console.error('Camera access error:', err);
+      showStatus('error', `Camera unavailable: ${err.message}. Use manual input instead.`);
+    }
+  };
 
   const sanitizePrefix = () => {
     if (!currentItem) return 'ITEM';
@@ -195,6 +141,7 @@ export default function WarehouseScanner() {
       return `${prefix}-${counter}`;
     });
     setSerialNumbers(serials);
+    showStatus('success', `✓ Generated ${serials.length} serial numbers`);
   };
 
   const handleSaveStock = async () => {
@@ -211,28 +158,33 @@ export default function WarehouseScanner() {
       showStatus('error', 'Enter a valid quantity');
       return;
     }
-    const warehouse = warehouses.find((w) => w.id === Number(selectedWarehouseId));
+
     setIsSaving(true);
+    
     try {
-      await smartErpApi.deviceEvent({
-        deviceType: 'Scanner',
-        eventType: 'StockIn',
-        payload: detectedBarcode,
+      await smartErpApi.receiveInventory({
+        itemId: currentItem.id,
         quantity: qty,
+        warehouseId: Number(selectedWarehouseId),
         lotNumber: lotNumber.trim() || null,
-        serialNumbers,
-        warehouse: warehouse
-          ? { id: warehouse.id, name: warehouse.name, code: warehouse.code }
-          : null,
-        deviceId: 'BrowserCamera'
+        serialNumbers: serialNumbers.length > 0 ? serialNumbers : null
       });
-      showStatus('success', 'Stock Added Successfully');
+      
+      showStatus('success', '✓ Stock received successfully!');
       setQuantity(1);
       setLotNumber('');
       setSerialNumbers([]);
+      setDetectedBarcode('');
+      setCurrentItem(null);
+      setStockInfo([]);
+      
+      // Refocus input for next scan
+      if (manualInputRef.current) {
+        manualInputRef.current.focus();
+      }
     } catch (error) {
       console.error('save failed', error);
-      showStatus('error', 'Failed to save stock');
+      showStatus('error', error?.response?.data?.message || 'Failed to save stock');
     } finally {
       setIsSaving(false);
     }
@@ -242,7 +194,18 @@ export default function WarehouseScanner() {
     setQuantity(1);
     setLotNumber('');
     setSerialNumbers([]);
+    setDetectedBarcode('');
+    setCurrentItem(null);
+    setStockInfo([]);
     setStatus({ type: '', text: '' });
+    if (manualInputRef.current) {
+      manualInputRef.current.focus();
+    }
+  };
+
+  const mapWarehouseName = (warehouseId) => {
+    const wh = warehouses.find((w) => w.id === warehouseId);
+    return wh ? wh.name : 'Unknown';
   };
 
   const selectedWarehouse = warehouses.find(
@@ -250,305 +213,173 @@ export default function WarehouseScanner() {
   );
 
   return (
-    <section style={styles.wrapper}>
-      <div style={styles.scannerGrid}>
-        <div style={styles.cameraWrapper}>
-          <video ref={videoRef} style={styles.video} muted playsInline autoPlay />
-          <div style={styles.barcodeBadge}>
-            <span style={{ fontWeight: 600 }}>Detected Barcode:</span>
-            <p style={{ margin: '4px 0 0' }}>{detectedBarcode || 'Waiting for scan...'}</p>
-          </div>
+    <div style={{ padding: '20px', background: '#f5f7fb', minHeight: '100vh' }}>
+      <h2 style={{ marginBottom: '20px', color: '#1a365d' }}>📦 Warehouse Stock Entry</h2>
+
+      {status.text && (
+        <div
+          style={{
+            padding: '12px 16px',
+            marginBottom: '20px',
+            borderRadius: '6px',
+            backgroundColor: status.type === 'success' ? '#dcfce7' : '#fee2e2',
+            color: status.type === 'success' ? '#166534' : '#991b1b',
+            border: `1px solid ${status.type === 'success' ? '#86efac' : '#fca5a5'}`,
+            fontWeight: '500'
+          }}
+        >
+          {status.text}
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+        <div style={{ background: 'white', padding: '20px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+          <h4 style={{ marginTop: 0, marginBottom: '15px', color: '#1a365d' }}>🔍 Scan Barcode</h4>
+          <input
+            ref={manualInputRef}
+            type="text"
+            placeholder="Point scanner here or type barcode manually..."
+            onKeyUp={handleBarcodeInput}
+            autoFocus
+            style={{
+              width: '100%',
+              padding: '12px',
+              border: '2px solid #cbd5e1',
+              borderRadius: '6px',
+              fontSize: '16px',
+              marginBottom: '10px'
+            }}
+          />
+          <p style={{ fontSize: '12px', color: '#64748b', margin: '10px 0 0' }}>
+            ℹ️ Scanner compatible: CODE_128, CODE_39, QR_CODE, EAN, UPC, PDF417
+          </p>
         </div>
 
-        <div style={styles.detailsPanel}>
-          <h3 style={styles.sectionHeading}>Item Details</h3>
+        <div style={{ background: 'white', padding: '20px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+          <h4 style={{ marginTop: 0, marginBottom: '12px', color: '#1a365d' }}>📋 Item Details</h4>
           {currentItem ? (
-            <div>
-              <p>
-                <strong>Name:</strong> {currentItem.description || '—'}
-              </p>
-              <p>
-                <strong>Item Code:</strong> {currentItem.itemCode}
-              </p>
-              <p>
-                <strong>Default Warehouse:</strong>{' '}
-                {selectedWarehouse ? selectedWarehouse.name : 'Not selected'}
-              </p>
-              <div>
-                <strong>Stock Information</strong>
-                {stockInfo.length === 0 ? (
-                  <p style={styles.emptyText}>No stock records available.</p>
-                ) : (
-      <table style={styles.stockTable}>
-        <thead>
-          <tr>
-            <th style={styles.tableHeader}>Warehouse</th>
-            <th style={styles.tableHeader}>Lot</th>
-            <th style={styles.tableHeader}>Quantity</th>
-          </tr>
-        </thead>
-        <tbody>
-          {stockInfo.map((record) => (
-            <tr key={`${record.warehouseId}-${record.lotId ?? 'lot'}-${record.quantity ?? 0}`}>
-                          <td style={styles.tableCell}>
-                            {mapWarehouseName(record.warehouseId)}
-                          </td>
-                          <td style={styles.tableCell}>{record.lotNumber || '—'}</td>
-                          <td style={styles.tableCell}>{record.quantity ?? 0}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
+            <div style={{ fontSize: '14px' }}>
+              <p style={{ margin: '6px 0' }}><strong>Code:</strong> {currentItem.itemCode}</p>
+              <p style={{ margin: '6px 0' }}><strong>Name:</strong> {currentItem.description || '—'}</p>
+              <p style={{ margin: '6px 0' }}><strong>UPC:</strong> {currentItem.barcode || '—'}</p>
+              <p style={{ margin: '6px 0', color: '#166534', fontWeight: '600' }}>✓ Ready to receive</p>
             </div>
           ) : (
-            <p style={styles.emptyText}>Scan a barcode to populate item details.</p>
+            <p style={{ color: '#64748b', margin: '0', fontSize: '14px' }}>Scan a barcode to see item details...</p>
           )}
         </div>
       </div>
 
-      <div style={styles.formPanel}>
-        <h3 style={styles.sectionHeading}>Warehouse Stock Entry</h3>
-        {status.text && (
-          <div
-            style={{
-              ...styles.status,
-              backgroundColor: status.type === 'success' ? '#dcfce7' : '#fee2e2',
-              color: status.type === 'success' ? '#166534' : '#991b1b',
-              borderColor: status.type === 'success' ? '#166534' : '#991b1b'
-            }}
-          >
-            {status.text}
+      {currentItem && stockInfo.length > 0 && (
+        <div style={{ background: 'white', padding: '20px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', marginBottom: '20px' }}>
+          <h4 style={{ marginTop: 0, marginBottom: '12px', color: '#1a365d' }}>📊 Current Stock</h4>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+            <thead>
+              <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #cbd5e1' }}>
+                <th style={{ padding: '10px', textAlign: 'left' }}>Warehouse</th>
+                <th style={{ padding: '10px', textAlign: 'left' }}>Lot</th>
+                <th style={{ padding: '10px', textAlign: 'right' }}>Qty</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stockInfo.map((record, idx) => (
+                <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                  <td style={{ padding: '10px' }}>{mapWarehouseName(record.warehouseId)}</td>
+                  <td style={{ padding: '10px' }}>{record.lotNumber || '—'}</td>
+                  <td style={{ padding: '10px', textAlign: 'right', fontWeight: '600' }}>{record.quantity || 0}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div style={{ background: 'white', padding: '20px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+        <h4 style={{ marginTop: 0, marginBottom: '15px', color: '#1a365d' }}>✏️ Stock Entry Form</h4>
+        
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
+          <label style={{ display: 'flex', flexDirection: 'column' }}>
+            <span style={{ fontWeight: '600', marginBottom: '5px', fontSize: '14px' }}>Item Code</span>
+            <input type="text" value={currentItem?.itemCode || ''} readOnly style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '4px', background: '#f1f5f9' }} />
+          </label>
+
+          <label style={{ display: 'flex', flexDirection: 'column' }}>
+            <span style={{ fontWeight: '600', marginBottom: '5px', fontSize: '14px' }}>Quantity *</span>
+            <input type="number" min="1" value={quantity} onChange={(e) => setQuantity(e.target.value)} style={{ padding: '10px', border: '2px solid #cbd5e1', borderRadius: '4px' }} />
+          </label>
+
+          <label style={{ display: 'flex', flexDirection: 'column' }}>
+            <span style={{ fontWeight: '600', marginBottom: '5px', fontSize: '14px' }}>Warehouse *</span>
+            <select value={selectedWarehouseId} onChange={(e) => setSelectedWarehouseId(e.target.value)} style={{ padding: '10px', border: '2px solid #cbd5e1', borderRadius: '4px' }}>
+              <option value="">Select Warehouse</option>
+              {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+          </label>
+
+          <label style={{ display: 'flex', flexDirection: 'column' }}>
+            <span style={{ fontWeight: '600', marginBottom: '5px', fontSize: '14px' }}>Lot Number</span>
+            <input type="text" value={lotNumber} onChange={(e) => setLotNumber(e.target.value)} placeholder="Optional" style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '4px' }} />
+          </label>
+        </div>
+
+        {serialNumbers.length > 0 && (
+          <div style={{ background: '#f0f9ff', padding: '10px', borderRadius: '4px', marginBottom: '15px' }}>
+            <p style={{ fontSize: '12px', margin: '0 0 8px 0', fontWeight: '600' }}>Generated Serial Numbers: {serialNumbers.length}</p>
+            <p style={{ fontSize: '12px', margin: 0, color: '#0369a1' }}>{serialNumbers.join(', ')}</p>
           </div>
         )}
 
-        <div style={styles.formGrid}>
-          <label style={styles.label}>
-            Item Name
-            <input type="text" value={currentItem?.description || ''} readOnly style={styles.input} />
-          </label>
-          <label style={styles.label}>
-            Barcode
-            <input type="text" value={detectedBarcode} readOnly style={styles.input} />
-          </label>
-          <label style={styles.label}>
-            Quantity
-            <input
-              type="number"
-              min="1"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
-              style={styles.input}
-            />
-          </label>
-          <label style={styles.label}>
-            Lot Number
-            <input
-              type="text"
-              value={lotNumber}
-              onChange={(e) => setLotNumber(e.target.value)}
-              style={styles.input}
-            />
-          </label>
-          <label style={styles.label}>
-            Warehouse
-            <select
-              value={selectedWarehouseId}
-              onChange={(e) => setSelectedWarehouseId(e.target.value)}
-              style={styles.input}
-            >
-              <option value="">Select Warehouse</option>
-              {warehouses.map((warehouse) => (
-                <option key={warehouse.id} value={warehouse.id}>
-                  {warehouse.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <div style={styles.actions}>
+        <div style={{ display: 'flex', gap: '10px' }}>
           <button
-            type="button"
             onClick={generateSerialNumbers}
-            style={{ ...styles.primaryBtn, marginRight: '12px' }}
-            disabled={!currentItem || Number(quantity) <= 0}
+            disabled={!currentItem}
+            style={{
+              padding: '10px 20px',
+              background: '#3b82f6',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              fontWeight: '600',
+              cursor: currentItem ? 'pointer' : 'not-allowed',
+              opacity: currentItem ? 1 : 0.5
+            }}
           >
-            Generate Serial Numbers
+            Generate Serials
           </button>
+
           <button
-            type="button"
             onClick={handleSaveStock}
-            style={styles.successBtn}
-            disabled={isSaving || !currentItem || Number(quantity) <= 0}
+            disabled={!currentItem || isSaving}
+            style={{
+              padding: '10px 20px',
+              background: '#10b981',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              fontWeight: '600',
+              cursor: currentItem && !isSaving ? 'pointer' : 'not-allowed',
+              opacity: currentItem && !isSaving ? 1 : 0.5
+            }}
           >
-            {isSaving ? 'Saving...' : 'Save Stock IN'}
+            {isSaving ? 'Saving...' : '✓ Receive Stock'}
           </button>
-          <button type="button" onClick={handleClear} style={styles.secondaryBtn}>
+
+          <button
+            onClick={handleClear}
+            style={{
+              padding: '10px 20px',
+              background: '#6b7280',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              fontWeight: '600',
+              cursor: 'pointer'
+            }}
+          >
             Clear
           </button>
         </div>
-
-        <div style={styles.serialArea}>
-          <h4 style={{ marginBottom: '8px' }}>Serial Numbers</h4>
-          {serialNumbers.length === 0 ? (
-            <p style={styles.emptyText}>No serial numbers generated yet.</p>
-          ) : (
-            <div style={styles.serialList}>
-              {serialNumbers.map((serial) => (
-                <div key={serial} style={styles.serialRow}>
-                  {serial}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
       </div>
-    </section>
+    </div>
   );
 }
-
-const styles = {
-  wrapper: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '24px',
-    padding: '0 0 24px'
-  },
-  scannerGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-    gap: '20px'
-  },
-  cameraWrapper: {
-    position: 'relative',
-    borderRadius: '12px',
-    overflow: 'hidden',
-    backgroundColor: '#000',
-    minHeight: '320px'
-  },
-  video: {
-    width: '100%',
-    height: '100%',
-    objectFit: 'cover',
-    display: 'block'
-  },
-  barcodeBadge: {
-    position: 'absolute',
-    bottom: '12px',
-    left: '12px',
-    right: '12px',
-    padding: '12px',
-    backgroundColor: 'rgba(15,23,42,0.82)',
-    color: '#fff',
-    borderRadius: '8px'
-  },
-  detailsPanel: {
-    padding: '18px',
-    borderRadius: '12px',
-    background: '#fff',
-    boxShadow: '0 2px 10px rgba(0,0,0,0.06)'
-  },
-  sectionHeading: {
-    margin: 0,
-    marginBottom: '12px',
-    fontSize: '18px'
-  },
-  emptyText: {
-    margin: '0',
-    color: '#6b7280'
-  },
-  stockTable: {
-    width: '100%',
-    borderCollapse: 'collapse',
-    marginTop: '8px'
-  },
-  tableHeader: {
-    textAlign: 'left',
-    borderBottom: '1px solid #e5e7eb',
-    padding: '6px 4px'
-  },
-  tableCell: {
-    padding: '6px 4px',
-    borderBottom: '1px solid #f3f4f6'
-  },
-  formPanel: {
-    padding: '20px',
-    borderRadius: '12px',
-    background: '#fff',
-    boxShadow: '0 2px 12px rgba(0,0,0,0.05)'
-  },
-  formGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-    gap: '16px',
-    marginTop: '12px'
-  },
-  label: {
-    display: 'flex',
-    flexDirection: 'column',
-    fontSize: '13px',
-    fontWeight: 600,
-    color: '#0f172a'
-  },
-  input: {
-    marginTop: '6px',
-    padding: '10px',
-    borderRadius: '8px',
-    border: '1px solid #cbd5f5',
-    fontSize: '14px'
-  },
-  actions: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    marginTop: '20px',
-    gap: '12px',
-    alignItems: 'center'
-  },
-  primaryBtn: {
-    padding: '10px 16px',
-    borderRadius: '8px',
-    backgroundColor: '#0f172a',
-    color: '#fff',
-    border: 'none',
-    cursor: 'pointer'
-  },
-  successBtn: {
-    padding: '10px 18px',
-    borderRadius: '8px',
-    backgroundColor: '#10b981',
-    color: '#fff',
-    border: 'none',
-    cursor: 'pointer'
-  },
-  secondaryBtn: {
-    padding: '10px 16px',
-    borderRadius: '8px',
-    backgroundColor: '#e2e8f0',
-    border: 'none',
-    cursor: 'pointer'
-  },
-  status: {
-    borderRadius: '8px',
-    padding: '10px',
-    border: '1px solid',
-    marginBottom: '16px'
-  },
-  serialArea: {
-    marginTop: '18px'
-  },
-  serialList: {
-    maxHeight: '200px',
-    overflowY: 'auto',
-    border: '1px solid #e2e8f0',
-    borderRadius: '8px',
-    padding: '8px',
-    backgroundColor: '#f8fafc'
-  },
-  serialRow: {
-    padding: '6px 8px',
-    borderBottom: '1px solid #e2e8f0',
-    fontFamily: 'monospace'
-  }
-};
