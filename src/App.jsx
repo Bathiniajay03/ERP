@@ -20,6 +20,8 @@ import Customers from "./forms/Customers";
 import Notifications from "./forms/Notifications";
 import LocalAIPage from "./pages/LocalAIPage";
 import SalesOrderList from "./forms/SalesOrderList";
+import Vendors from "./forms/Vendors";
+import StockAlerts from "./forms/StockAlerts";
 
 import { smartErpApi } from "./services/smartErpApi";
 import { LocalAIProvider } from "./context/LocalAIContext";
@@ -46,6 +48,8 @@ const MODULE_CONFIG = [
     path: "/notifications"
   },
   { id: "warehouses", label: "Warehouses", path: "/warehouses" },
+  { id: "vendors", label: "Vendors", path: "/vendors" },
+  { id: "stockAlerts", label: "Stock Alerts", path: "/stock-alerts" },
   { id: "reports", label: "Reports", path: "/reports" },
   { id: "automation", label: "Automation", path: "/automation" },
   { id: "vendorReturns", label: "Vendor Returns", path: "/vendor-returns" },
@@ -64,6 +68,8 @@ const DEFAULT_ROLE_MODULES = {
     "createSalesOrder",
     "purchaseOrders",
     "customers",
+    "vendors",
+    "stockAlerts",
     "notifications",
     "reports",
     "vendorReturns"
@@ -74,6 +80,9 @@ const DEFAULT_ROLE_MODULES = {
     "inventory",
     "operations",
     "purchaseOrders",
+    "customers",
+    "vendors",
+    "stockAlerts",
     "warehouses",
     "notifications",
     "vendorReturns"
@@ -85,6 +94,9 @@ const DEFAULT_ROLE_MODULES = {
     "notifications",
     "salesOrderList",
     "purchaseOrders",
+    "customers",
+    "vendors",
+    "stockAlerts",
     "vendorReturns"
   ],
   "Robot Supervisor": ["dashboard", "operations", "automation", "localAI", "notifications"],
@@ -366,6 +378,8 @@ export default function App() {
                 <Route path="/customers" element={renderProtectedRoute("customers", <Customers />)} />
                 <Route path="/notifications" element={renderProtectedRoute("notifications", <Notifications />)} />
                 <Route path="/warehouses" element={renderProtectedRoute("warehouses", <Warehouses />)} />
+                <Route path="/vendors" element={renderProtectedRoute("vendors", <Vendors />)} />
+                <Route path="/stock-alerts" element={renderProtectedRoute("stockAlerts", <StockAlerts />)} />
                 <Route path="/reports" element={renderProtectedRoute("reports", <Reports />)} />
                 <Route path="/automation" element={renderProtectedRoute("automation", <Automation />)} />
                 <Route path="/local-ai" element={renderProtectedRoute("localAI", <LocalAIPage />)} />

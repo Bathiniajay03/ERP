@@ -312,7 +312,24 @@ export const smartErpApi = {
     api.get("/stock/inventory"),
 
   stockTransactions: () =>
-    api.get("/stock/transactions")
+    api.get("/stock/transactions"),
+
+
+  // Vendor Returns
+  createVendorReturn: (payload) =>
+    api.post("/vendor-returns", payload),
+
+  getVendorReturns: () =>
+    api.get("/vendor-returns"),
+
+  approveVendorReturn: (id, payload) =>
+    api.post(`/vendor-returns/${id}/approve`, payload),
+
+  shipVendorReturn: (id, payload) =>
+    api.post(`/vendor-returns/${id}/ship`, payload),
+
+  refundVendorReturn: (id, payload) =>
+    api.post(`/vendor-returns/${id}/refund`, payload)
 };
 // import api from "./apiClient";
 

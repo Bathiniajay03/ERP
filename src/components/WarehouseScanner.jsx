@@ -128,8 +128,9 @@ export default function WarehouseScanner() {
 
     const startScanner = async () => {
       try {
-        // First request camera permission
-        await navigator.mediaDevices.getUserMedia({ video: true });
+        // Request back camera specifically for barcode scanning
+        const constraints = { video: { facingMode: 'environment' } };
+        await navigator.mediaDevices.getUserMedia(constraints);
 
         // Then enumerate video devices
         const devices = await navigator.mediaDevices.enumerateDevices();
@@ -139,10 +140,15 @@ export default function WarehouseScanner() {
           throw new Error('No camera devices found');
         }
 
-        const preferred = videoDevices[0]?.deviceId;
+        // Find the back camera device
+        const backCamera = videoDevices.find(device => 
+          device.label.toLowerCase().includes('back') || 
+          device.label.toLowerCase().includes('rear') ||
+          device.label.toLowerCase().includes('environment')
+        ) || videoDevices[videoDevices.length - 1]; // Fallback to last device which is often back camera
 
         await reader.decodeFromVideoDevice(
-          preferred || undefined,
+          backCamera.deviceId,
           videoRef.current,
           (result, error) => {
             if (result) {
