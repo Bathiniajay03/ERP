@@ -59,7 +59,25 @@ const MODULE_CONFIG = [
 
 const DEFAULT_ROLE_MODULES = {
   Admin: MODULE_CONFIG.map((module) => module.id),
-  Operator: [
+  Manager: [
+    "dashboard",
+    "products",
+    "inventory",
+    "finance",
+    "operations",
+    "salesOrderList",
+    "createSalesOrder",
+    "purchaseOrders",
+    "customers",
+    "notifications",
+    "warehouses",
+    "vendors",
+    "stockAlerts",
+    "reports",
+    "automation",
+    "vendorReturns"
+  ],
+  OperationsWorker: [
     "dashboard",
     "products",
     "inventory",
@@ -73,6 +91,9 @@ const DEFAULT_ROLE_MODULES = {
     "notifications",
     "reports",
     "vendorReturns"
+  ],
+  ScannerWorker: [
+    "operations" // Only operations page
   ],
   "Warehouse Manager": [
     "dashboard",
@@ -166,11 +187,22 @@ export default function App() {
     [isClient]
   );
 
-  const handleLogout = useCallback(() => {
+  const handleLogout = useCallback(async () => {
+    try {
+      // Get login log ID from localStorage (set during login)
+      const loginLogId = window.localStorage.getItem("erp_login_log_id");
+      if (loginLogId) {
+        await smartErpApi.logout({ loginLogId: parseInt(loginLogId) });
+      }
+    } catch (err) {
+      console.error("Logout API failed:", err);
+    }
+
     if (isClient) {
       window.localStorage.removeItem("erp_token");
       window.localStorage.removeItem("erp_role");
       window.localStorage.removeItem("erp_last_activity");
+      window.localStorage.removeItem("erp_login_log_id");
     }
     lastActivityRef.current = 0;
     setRole("");
@@ -182,6 +214,9 @@ export default function App() {
       if (isClient) {
         window.localStorage.setItem("erp_token", payload.accessToken);
         window.localStorage.setItem("erp_role", payload.role || "");
+        if (payload.loginLogId) {
+          window.localStorage.setItem("erp_login_log_id", payload.loginLogId.toString());
+        }
       }
       updateLastActivity();
       setRole(payload.role || "");
@@ -283,7 +318,7 @@ export default function App() {
     const configured = allowedModulesByRole[role];
     if (configured && configured.length) return configured;
     if (DEFAULT_ROLE_MODULES[role]) return DEFAULT_ROLE_MODULES[role];
-    return DEFAULT_ROLE_MODULES.Operator;
+    return DEFAULT_ROLE_MODULES.OperationsWorker;
   }, [allowedModulesByRole, role]);
 
   const navItems = useMemo(

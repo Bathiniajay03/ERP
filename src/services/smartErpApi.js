@@ -182,6 +182,30 @@ export const smartErpApi = {
   registerUser: (payload) =>
     api.post("/smart-erp/auth/register", payload),
 
+  logout: (payload) =>
+    api.post("/smart-erp/auth/logout", payload),
+
+  getUsers: () =>
+    api.get("/smart-erp/auth/users"),
+
+  updateUser: (id, payload) =>
+    api.put(`/users/${id}`, payload),
+
+  deleteUser: (id) =>
+    api.delete(`/users/${id}`),
+
+  blockUser: (id) =>
+    api.post(`/users/${id}/block`),
+
+  unblockUser: (id) =>
+    api.post(`/users/${id}/unblock`),
+
+  getWorkerMonitor: (params = {}) =>
+    api.get("/useractivitylogs/worker-monitor", { params }),
+
+  getScannerOperations: (params = {}) =>
+    api.get("/scanneroperations", { params }),
+
 
   // Product & Inventory
   createProduct: (payload) =>

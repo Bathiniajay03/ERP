@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useState } from 'react';
 import api from '../services/apiClient';
 import WarehouseScanner from '../components/WarehouseScanner';
+import MobileScanner from '../components/MobileScanner';
 
 export default function Operations() {
   const [items, setItems] = useState([]);
@@ -233,7 +234,7 @@ export default function Operations() {
       )}
 
       <div style={styles.tabs}>
-        {['stock', 'sales'].map(tab => (
+        {['stock', 'sales', 'scanner'].map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)} 
             style={{ ...styles.tab, ...(activeTab === tab ? styles.activeTab : {}) }}>
             {tab.toUpperCase()}
@@ -352,6 +353,15 @@ export default function Operations() {
           )}
           </div>
         </>
+      )}
+
+      {activeTab === 'scanner' && (
+        <MobileScanner 
+          items={items}
+          warehouses={warehouses}
+          onStatus={showStatus}
+          onRefresh={fetchData}
+        />
       )}
 
       {/* Serial Modal Placeholder Logic follows Bootstrap classes provided in original */}
