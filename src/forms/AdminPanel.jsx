@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { smartErpApi } from "../services/smartErpApi";
 
 export default function AdminPanel({
@@ -37,18 +37,18 @@ export default function AdminPanel({
     }
   }, [allowedModulesByRole, moduleRole]);
 
-  useEffect(() => {
-    loadUsers();
-  }, []);
-
-  const loadUsers = async () => {
+  const loadUsers = useCallback(async () => {
     try {
       const res = await smartErpApi.getUsers();
       setUsers(res.data || []);
     } catch (err) {
       console.error("Failed to load users:", err);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadUsers();
+  }, [loadUsers]);
 
   const modulePlaceholders = useMemo(
     () =>
@@ -175,36 +175,6 @@ export default function AdminPanel({
       ...form,
       [name]: type === "checkbox" ? checked : value
     });
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-
-    try {
-
-      const res = await smartErpApi.registerUser(form);
-
-      setResult(`User created: ${res.data.username} (${res.data.role})`);
-
-      setForm({
-        username: "",
-        email: "",
-        password: "",
-        role: "Operator",
-        mfaEnabled: false
-      });
-
-    } catch (err) {
-
-      setResult(
-        err?.response?.data ||
-        "User registration failed"
-      );
-
-    }
-
-    setLoading(false);
   };
 
   return (
@@ -500,7 +470,7 @@ export default function AdminPanel({
 function WorkerMonitor() {
   const [workerData, setWorkerData] = useState([]);
   const [scannerOperations, setScannerOperations] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [, setLoading] = useState(false);
   const [filters, setFilters] = useState({
     startDate: '',
     endDate: '',
@@ -508,12 +478,7 @@ function WorkerMonitor() {
     warehouseId: ''
   });
 
-  useEffect(() => {
-    loadWorkerData();
-    loadScannerOperations();
-  }, [filters]);
-
-  const loadWorkerData = async () => {
+  const loadWorkerData = useCallback(async () => {
     try {
       setLoading(true);
       const params = {};
@@ -529,9 +494,9 @@ function WorkerMonitor() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filters]);
 
-  const loadScannerOperations = async () => {
+  const loadScannerOperations = useCallback(async () => {
     try {
       const params = {};
       if (filters.startDate) params.startDate = filters.startDate;
@@ -544,7 +509,12 @@ function WorkerMonitor() {
     } catch (err) {
       console.error('Failed to load scanner operations:', err);
     }
-  };
+  }, [filters]);
+
+  useEffect(() => {
+    loadWorkerData();
+    loadScannerOperations();
+  }, [loadWorkerData, loadScannerOperations]);
 
   const handleFilterChange = (field, value) => {
     setFilters(prev => ({ ...prev, [field]: value }));

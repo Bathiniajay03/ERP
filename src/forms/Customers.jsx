@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import api from "../services/apiClient";
 
 export default function Customers() {
@@ -25,7 +25,7 @@ export default function Customers() {
     notes: ""
   });
 
-  const fetchCustomers = async () => {
+  const fetchCustomers = useCallback(async () => {
    setLoading(true);
     try {
      const res = await api.get("/customers");
@@ -35,12 +35,13 @@ export default function Customers() {
     } finally {
      setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { fetchCustomers(); }, []);
+  useEffect(() => { fetchCustomers(); }, [fetchCustomers]);
 
   const handleCreate = async (e) => {
    e.preventDefault();
+    setLoading(true);
     try {
       await api.post("/customers", form);
      setMessage("Customer created successfully!");
@@ -49,6 +50,8 @@ export default function Customers() {
      fetchCustomers();
     } catch (err) {
      setMessage(err?.response?.data || "Failed to create customer");
+    } finally {
+     setLoading(false);
     }
   };
 
@@ -132,7 +135,9 @@ export default function Customers() {
               <textarea className="form-control" rows="2" value={form.notes} onChange={(e) => setForm({...form, notes: e.target.value})} placeholder="Additional information..."></textarea>
             </div>
             <div className="col-12">
-              <button type="submit" className="btn btn-primary">Create Customer</button>
+            <button type="submit" className="btn btn-primary" disabled={loading}>
+              {loading ? "Creating..." : "Create Customer"}
+            </button>
             </div>
           </form>
         </div>

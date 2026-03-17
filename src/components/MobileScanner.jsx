@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { smartErpApi } from '../services/smartErpApi';
 
 const SCAN_COOLDOWN_MS = 800;
@@ -31,24 +31,28 @@ export default function MobileScanner() {
   const [status, setStatus] = useState({ type: '', text: '' });
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState([]);
-  const [dataLoaded, setDataLoaded] = useState(false);
   const lastScan = useRef({ barcode: '', timestamp: 0 });
 
-  useEffect(() => {
-    fetchInitialData();
+  const showStatus = useCallback((type, text) => {
+    setStatus({ type, text });
+    setTimeout(() => setStatus({ type: '', text: '' }), 4000);
   }, []);
 
-  useEffect(() => {
-    if (mode !== 'selectMode') {
-      startCamera();
-      focusInput();
-    } else {
-      stopCamera();
-    }
-    return () => stopCamera();
-  }, [mode]);
+  const focusInput = useCallback(() => {
+    setTimeout(() => {
+      if (manualInputRef.current) manualInputRef.current.focus();
+    }, 100);
+  }, []);
 
-  const startCamera = async () => {
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    setCameraActive(false);
+  }, []);
+
+  const startCamera = useCallback(async () => {
     try {
       setCameraError('');
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -58,7 +62,7 @@ export default function MobileScanner() {
           height: { ideal: 720 }
         }
       });
-      
+
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -71,17 +75,9 @@ export default function MobileScanner() {
       setCameraActive(false);
       showStatus('warning', '⚠️ Camera denied - Using manual input only');
     }
-  };
+  }, [showStatus]);
 
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-    setCameraActive(false);
-  };
-
-  const fetchInitialData = async () => {
+  const fetchInitialData = useCallback(async () => {
     try {
       const [itemsRes, whRes] = await Promise.all([
         smartErpApi.stockItems(),
@@ -89,34 +85,34 @@ export default function MobileScanner() {
       ]);
       const itemsData = Array.isArray(itemsRes.data) ? itemsRes.data : [];
       const whData = Array.isArray(whRes.data) ? whRes.data : [];
-      
+
       setItems(itemsData);
       setWarehouses(whData);
-      
+
       if (whData.length > 0) {
         const firstWarehouseId = String(whData[0].id);
         setStockInData(prev => ({ ...prev, warehouseId: firstWarehouseId }));
         setStockOutData(prev => ({ ...prev, warehouseId: firstWarehouseId }));
       }
-      
-      setDataLoaded(true);
     } catch (error) {
       console.error('Failed to load initial data', error);
       showStatus('error', '❌ Failed to load warehouses and items');
-      setDataLoaded(true);
     }
-  };
+  }, [showStatus]);
 
-  const focusInput = () => {
-    setTimeout(() => {
-      if (manualInputRef.current) manualInputRef.current.focus();
-    }, 100);
-  };
+  useEffect(() => {
+    fetchInitialData();
+  }, [fetchInitialData]);
 
-  const showStatus = (type, text) => {
-    setStatus({ type, text });
-    setTimeout(() => setStatus({ type: '', text: '' }), 4000);
-  };
+  useEffect(() => {
+    if (mode !== 'selectMode') {
+      startCamera();
+      focusInput();
+    } else {
+      stopCamera();
+    }
+    return stopCamera;
+  }, [mode, startCamera, focusInput, stopCamera]);
 
   const handleBarcodeInput = async (e) => {
     if (e.key !== 'Enter') return;

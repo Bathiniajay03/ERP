@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { smartErpApi } from '../services/smartErpApi';
 
 const SCAN_COOLDOWN_MS = 1000;
@@ -6,7 +6,7 @@ const SCAN_COOLDOWN_MS = 1000;
 export default function WarehouseScanner() {
   const manualInputRef = useRef(null);
   
-  const [detectedBarcode, setDetectedBarcode] = useState('');
+  const [, setDetectedBarcode] = useState('');
   const [currentItem, setCurrentItem] = useState(null);
   const [stockInfo, setStockInfo] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
@@ -19,14 +19,12 @@ export default function WarehouseScanner() {
   const [items, setItems] = useState([]);
   const lastScan = useRef({ barcode: '', timestamp: 0 });
 
-  const showStatus = (type, text) => {
+  const showStatus = useCallback((type, text) => {
     setStatus({ type, text });
-    setTimeout(() => {
-      setStatus({ type: '', text: '' });
-    }, 4000);
-  };
+    setTimeout(() => setStatus({ type: '', text: '' }), 4000);
+  }, []);
 
-  const fetchWarehouses = async () => {
+  const fetchWarehouses = useCallback(async () => {
     try {
       const response = await smartErpApi.warehouses();
       const data = response.data || [];
@@ -38,21 +36,21 @@ export default function WarehouseScanner() {
       console.error('warehouse load failed', error);
       showStatus('error', 'Unable to load warehouses');
     }
-  };
+  }, [showStatus]);
 
-  const fetchItems = async () => {
+  const fetchItems = useCallback(async () => {
     try {
       const response = await smartErpApi.stockItems();
       setItems(Array.isArray(response.data) ? response.data : []);
     } catch (error) {
       console.error('items load failed', error);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchWarehouses();
     fetchItems();
-  }, []);
+  }, [fetchWarehouses, fetchItems]);
 
   const fetchItemDetails = async (barcode) => {
     setCurrentItem(null);
@@ -99,22 +97,6 @@ export default function WarehouseScanner() {
         fetchItemDetails(code);
         e.target.value = '';
       }
-    }
-  };
-
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      });
-      showStatus('success', 'Camera ready - type barcode or use device scanner');
-    } catch (err) {
-      console.error('Camera access error:', err);
-      showStatus('error', `Camera unavailable: ${err.message}. Use manual input instead.`);
     }
   };
 
@@ -207,10 +189,6 @@ export default function WarehouseScanner() {
     const wh = warehouses.find((w) => w.id === warehouseId);
     return wh ? wh.name : 'Unknown';
   };
-
-  const selectedWarehouse = warehouses.find(
-    (w) => String(w.id) === selectedWarehouseId
-  );
 
   return (
     <div style={{ padding: '20px', background: '#f5f7fb', minHeight: '100vh' }}>

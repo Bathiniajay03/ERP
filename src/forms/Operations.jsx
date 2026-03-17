@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import api from '../services/apiClient';
 import WarehouseScanner from '../components/WarehouseScanner';
 import MobileScanner from '../components/MobileScanner';
@@ -34,18 +34,7 @@ export default function Operations() {
     generatedSerials: []
   });
 
-  // Sales Workflow State
-  const [salesForm, setSalesForm] = useState({
-    customerName: '',
-    itemId: '',
-    warehouseId: '',
-    quantity: 1
-  });
-  const [currentOrder, setCurrentOrder] = useState(null);
-  const [barcode, setBarcode] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('UPI');
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const [itemsRes, whRes, invRes] = await Promise.all([
@@ -58,14 +47,14 @@ export default function Operations() {
       setInventory(invRes.data || []);
     } catch (err) {
       showStatus('error', 'Failed to load data');
-    } finally {
+  } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
 
   const showStatus = (type, text) => {
     setStatus({ type, text });
@@ -189,27 +178,6 @@ export default function Operations() {
   };
 
   // Logic for sales, picking, shipping etc remains same but UI is cleaned below
-  const createSalesOrder = async (e) => {
-    e.preventDefault();
-    try {
-      const response = await api.post('/smart-erp/orders', {
-        customerName: salesForm.customerName.trim(),
-        items: [{
-          itemId: parseInt(salesForm.itemId),
-          warehouseId: parseInt(salesForm.warehouseId),
-          quantity: parseInt(salesForm.quantity)
-        }]
-      });
-      setCurrentOrder({
-        id: response.data.orderId,
-        orderNumber: response.data.orderNumber,
-        totalAmount: response.data.totals?.totalAmount || 0,
-        status: 'Created'
-      });
-      showStatus('success', `Order #${response.data.orderNumber} created!`);
-    } catch (err) { showStatus('error', 'Order failed'); }
-  };
-
   return (
     <div style={styles.container}>
       <div style={styles.header}>
@@ -415,5 +383,3 @@ const styles = {
   emptyText: { color: '#6b7280', margin: 0 },
   submitBtn: { padding: '12px', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', gridColumn: '1 / -1' }
 };
-
-
