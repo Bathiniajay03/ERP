@@ -444,36 +444,255 @@ export default function MobileScanner() {
 }
 
 const styles = {
-  container: { padding: '12px', background: '#f5f7fb', minHeight: '100vh', fontFamily: 'system-ui' },
-  header: { position: 'relative', marginBottom: '20px', textAlign: 'center' },
-  backButton: { position: 'absolute', left: 0, top: 0, padding: '8px 12px', background: '#6b7280', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '14px' },
-  title: { margin: '0 0 4px', fontSize: '24px', color: '#1a365d', fontWeight: '700' },
-  subtitle: { margin: '0', fontSize: '14px', color: '#64748b' },
-  modeGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '30px' },
-  modeButton: { padding: '24px 16px', background: '#fff', border: '2px solid #cbd5e1', borderRadius: '12px', cursor: 'pointer', fontSize: '16px', textAlign: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
-  modeIcon: { fontSize: '48px', marginBottom: '12px' },
-  modeName: { fontSize: '18px', fontWeight: '700', color: '#1a365d', marginBottom: '8px' },
-  modeDescription: { fontSize: '13px', color: '#64748b' },
-  statusBox: { padding: '12px 16px', borderRadius: '8px', border: '1px solid', marginBottom: '16px', fontWeight: '500' },
-  cameraSection: { position: 'relative', background: '#000', borderRadius: '8px', overflow: 'hidden', marginBottom: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.2)' },
-  videoElement: { width: '100%', height: 'auto', display: 'block', minHeight: '300px', objectFit: 'cover' },
-  cameraOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' },
-  scanLine: { width: '80%', height: '3px', background: '#10b981', borderRadius: '2px', marginBottom: '12px', boxShadow: '0 0 10px #10b981' },
-  cameraText: { color: '#fff', fontSize: '14px', fontWeight: '600', textShadow: '0 2px 4px rgba(0,0,0,0.5)', margin: 0 },
-  cameraErrorBox: { background: '#fee2e2', color: '#991b1b', padding: '12px', borderRadius: '6px', marginBottom: '16px', fontSize: '13px', border: '1px solid #fca5a5' },
-  scanSection: { background: '#fff', padding: '16px', borderRadius: '8px', marginBottom: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
-  label: { display: 'block', fontWeight: '600', color: '#1a365d', marginBottom: '10px', fontSize: '14px' },
-  input: { width: '100%', padding: '12px', border: '2px solid #cbd5e1', borderRadius: '6px', fontSize: '16px', boxSizing: 'border-box' },
-  itemCard: { background: '#fff', padding: '14px', borderRadius: '8px', marginBottom: '14px', border: '2px solid #86efac', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
-  itemText: { margin: '6px 0', fontSize: '13px', color: '#334155' },
-  stockCard: { background: '#f0f9ff', padding: '14px', borderRadius: '8px', marginBottom: '14px', fontSize: '13px', border: '1px solid #e0f2fe' },
-  stockRow: { display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #e0f2fe' },
-  formCard: { background: '#fff', padding: '16px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
-  formGrid: { display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' },
-  formLabel: { display: 'flex', flexDirection: 'column' },
-  labelText: { fontWeight: '600', color: '#1a365d', fontSize: '13px', marginBottom: '6px' },
-  select: { padding: '10px', border: '2px solid #cbd5e1', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box' },
-  inputField: { padding: '10px', border: '2px solid #cbd5e1', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box' },
-  saveButton: { width: '100%', padding: '12px', background: '#10b981', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '600', fontSize: '14px', marginBottom: '8px', cursor: 'pointer' },
-  clearButton: { width: '100%', padding: '10px', background: '#e2e8f0', color: '#1a365d', border: 'none', borderRadius: '6px', fontWeight: '600', fontSize: '14px', cursor: 'pointer' }
+  container: { 
+    padding: 'max(16px, 2vw)', 
+    background: '#f5f7fb', 
+    minHeight: '100vh', 
+    fontFamily: 'system-ui',
+    maxWidth: '1200px',
+    margin: '0 auto'
+  },
+  header: { 
+    position: 'relative', 
+    marginBottom: '28px', 
+    textAlign: 'center',
+    paddingTop: '10px'
+  },
+  backButton: { 
+    position: 'absolute', 
+    left: '0', 
+    top: '0', 
+    padding: '10px 16px', 
+    background: '#6b7280', 
+    color: '#fff', 
+    border: 'none', 
+    borderRadius: '6px', 
+    cursor: 'pointer', 
+    fontWeight: '600', 
+    fontSize: '15px',
+    transition: 'background 0.2s'
+  },
+  title: { 
+    margin: '0 0 8px', 
+    fontSize: 'clamp(24px, 6vw, 32px)', 
+    color: '#1a365d', 
+    fontWeight: '700' 
+  },
+  subtitle: { 
+    margin: '0', 
+    fontSize: 'clamp(13px, 3vw, 16px)', 
+    color: '#64748b' 
+  },
+  modeGrid: { 
+    display: 'grid', 
+    gridTemplateColumns: '1fr 1fr', 
+    gap: 'clamp(12px, 4vw, 24px)', 
+    marginTop: '40px' 
+  },
+  modeButton: { 
+    padding: 'clamp(20px, 5vw, 32px) clamp(16px, 4vw, 24px)', 
+    background: '#fff', 
+    border: '2px solid #cbd5e1', 
+    borderRadius: '12px', 
+    cursor: 'pointer', 
+    fontSize: '16px', 
+    textAlign: 'center', 
+    boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+    transition: 'all 0.3s'
+  },
+  modeIcon: { 
+    fontSize: 'clamp(40px, 10vw, 56px)', 
+    marginBottom: '16px' 
+  },
+  modeName: { 
+    fontSize: 'clamp(16px, 4vw, 20px)', 
+    fontWeight: '700', 
+    color: '#1a365d', 
+    marginBottom: '8px' 
+  },
+  modeDescription: { 
+    fontSize: 'clamp(12px, 2.5vw, 14px)', 
+    color: '#64748b' 
+  },
+  statusBox: { 
+    padding: '14px 18px', 
+    borderRadius: '8px', 
+    border: '1px solid', 
+    marginBottom: '20px', 
+    fontWeight: '500',
+    fontSize: '14px',
+    animation: 'slideIn 0.3s ease'
+  },
+  cameraSection: { 
+    position: 'relative', 
+    background: '#000', 
+    borderRadius: '12px', 
+    overflow: 'hidden', 
+    marginBottom: '20px', 
+    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+    aspectRatio: '16 / 9',
+    width: '100%'
+  },
+  videoElement: { 
+    width: '100%', 
+    height: '100%', 
+    display: 'block', 
+    objectFit: 'cover' 
+  },
+  cameraOverlay: { 
+    position: 'absolute', 
+    top: 0, 
+    left: 0, 
+    right: 0, 
+    bottom: 0, 
+    display: 'flex', 
+    flexDirection: 'column', 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    pointerEvents: 'none' 
+  },
+  scanLine: { 
+    width: '70%', 
+    height: '4px', 
+    background: '#10b981', 
+    borderRadius: '2px', 
+    marginBottom: '16px', 
+    boxShadow: '0 0 15px #10b981',
+    animation: 'pulse 2s infinite'
+  },
+  cameraText: { 
+    color: '#fff', 
+    fontSize: '16px', 
+    fontWeight: '600', 
+    textShadow: '0 2px 4px rgba(0,0,0,0.5)', 
+    margin: 0 
+  },
+  cameraErrorBox: { 
+    background: '#fee2e2', 
+    color: '#991b1b', 
+    padding: '14px 16px', 
+    borderRadius: '8px', 
+    marginBottom: '18px', 
+    fontSize: '14px', 
+    border: '2px solid #fca5a5' 
+  },
+  scanSection: { 
+    background: '#fff', 
+    padding: '20px', 
+    borderRadius: '10px', 
+    marginBottom: '20px', 
+    boxShadow: '0 1px 3px rgba(0,0,0,0.1)' 
+  },
+  label: { 
+    display: 'block', 
+    fontWeight: '700', 
+    color: '#1a365d', 
+    marginBottom: '12px', 
+    fontSize: 'clamp(13px, 3vw, 15px)' 
+  },
+  input: { 
+    width: '100%', 
+    padding: '14px 16px', 
+    border: '2px solid #cbd5e1', 
+    borderRadius: '8px', 
+    fontSize: '16px', 
+    boxSizing: 'border-box',
+    transition: 'border-color 0.2s'
+  },
+  itemCard: { 
+    background: '#fff', 
+    padding: '18px', 
+    borderRadius: '10px', 
+    marginBottom: '18px', 
+    border: '2px solid #86efac', 
+    boxShadow: '0 2px 6px rgba(0,0,0,0.08)' 
+  },
+  itemText: { 
+    margin: '8px 0', 
+    fontSize: 'clamp(13px, 2.5vw, 14px)', 
+    color: '#334155',
+    lineHeight: '1.5'
+  },
+  stockCard: { 
+    background: '#f0f9ff', 
+    padding: '18px', 
+    borderRadius: '10px', 
+    marginBottom: '18px', 
+    fontSize: 'clamp(13px, 2.5vw, 14px)', 
+    border: '2px solid #e0f2fe' 
+  },
+  stockRow: { 
+    display: 'flex', 
+    justifyContent: 'space-between', 
+    alignItems: 'center',
+    padding: '10px 0', 
+    borderBottom: '1px solid #e0f2fe',
+    gap: '12px'
+  },
+  formCard: { 
+    background: '#fff', 
+    padding: '24px', 
+    borderRadius: '10px', 
+    boxShadow: '0 2px 6px rgba(0,0,0,0.08)' 
+  },
+  formGrid: { 
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+    gap: '18px', 
+    marginBottom: '22px' 
+  },
+  formLabel: { 
+    display: 'flex', 
+    flexDirection: 'column' 
+  },
+  labelText: { 
+    fontWeight: '700', 
+    color: '#1a365d', 
+    fontSize: 'clamp(13px, 3vw, 15px)', 
+    marginBottom: '8px' 
+  },
+  select: { 
+    padding: '12px 14px', 
+    border: '2px solid #cbd5e1', 
+    borderRadius: '8px', 
+    fontSize: '14px', 
+    boxSizing: 'border-box',
+    background: '#fff',
+    cursor: 'pointer',
+    transition: 'border-color 0.2s'
+  },
+  inputField: { 
+    padding: '12px 14px', 
+    border: '2px solid #cbd5e1', 
+    borderRadius: '8px', 
+    fontSize: '14px', 
+    boxSizing: 'border-box',
+    transition: 'border-color 0.2s'
+  },
+  saveButton: { 
+    width: '100%', 
+    padding: '16px', 
+    background: '#10b981', 
+    color: '#fff', 
+    border: 'none', 
+    borderRadius: '8px', 
+    fontWeight: '700', 
+    fontSize: 'clamp(14px, 3vw, 16px)', 
+    marginBottom: '12px', 
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)'
+  },
+  clearButton: { 
+    width: '100%', 
+    padding: '14px', 
+    background: '#e2e8f0', 
+    color: '#1a365d', 
+    border: 'none', 
+    borderRadius: '8px', 
+    fontWeight: '600', 
+    fontSize: 'clamp(13px, 3vw, 15px)', 
+    cursor: 'pointer',
+    transition: 'all 0.2s'
+  }
 };

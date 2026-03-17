@@ -22,6 +22,7 @@ import LocalAIPage from "./pages/LocalAIPage";
 import SalesOrderList from "./forms/SalesOrderList";
 import Vendors from "./forms/Vendors";
 import StockAlerts from "./forms/StockAlerts";
+import ScannerDevicePage from "./pages/ScannerDevicePage";
 
 import { smartErpApi } from "./services/smartErpApi";
 import { LocalAIProvider } from "./context/LocalAIContext";
@@ -54,6 +55,7 @@ const MODULE_CONFIG = [
   { id: "automation", label: "Automation", path: "/automation" },
   { id: "vendorReturns", label: "Vendor Returns", path: "/vendor-returns" },
   { id: "localAI", label: "Local AI", path: "/local-ai" },
+  { id: "scannerDevice", label: "Scanner Device", path: "/scanner-device" },
   { id: "admin", label: "Admin", path: "/admin" }
 ];
 
@@ -75,7 +77,8 @@ const DEFAULT_ROLE_MODULES = {
     "stockAlerts",
     "reports",
     "automation",
-    "vendorReturns"
+    "vendorReturns",
+    "scannerDevice"
   ],
   OperationsWorker: [
     "dashboard",
@@ -90,10 +93,11 @@ const DEFAULT_ROLE_MODULES = {
     "stockAlerts",
     "notifications",
     "reports",
-    "vendorReturns"
+    "vendorReturns",
+    "scannerDevice"
   ],
   ScannerWorker: [
-    "operations" // Only operations page
+    "scannerDevice"
   ],
   "Warehouse Manager": [
     "dashboard",
@@ -106,7 +110,8 @@ const DEFAULT_ROLE_MODULES = {
     "stockAlerts",
     "warehouses",
     "notifications",
-    "vendorReturns"
+    "vendorReturns",
+    "scannerDevice"
   ],
   "Finance Manager": [
     "dashboard",
@@ -118,15 +123,17 @@ const DEFAULT_ROLE_MODULES = {
     "customers",
     "vendors",
     "stockAlerts",
-    "vendorReturns"
+    "vendorReturns",
+    "scannerDevice"
   ],
-  "Robot Supervisor": ["dashboard", "operations", "automation", "localAI", "notifications"],
+  "Robot Supervisor": ["dashboard", "operations", "automation", "localAI", "notifications", "scannerDevice"],
   User: [
     "dashboard",
     "operations",
     "salesOrderList",
     "notifications",
-    "reports"
+    "reports",
+    "scannerDevice"
   ]
 };
 
@@ -321,6 +328,19 @@ export default function App() {
     return DEFAULT_ROLE_MODULES.OperationsWorker;
   }, [allowedModulesByRole, role]);
 
+  const fallbackPath = useMemo(() => {
+    if (!allowedIds || allowedIds.length === 0) return "/dashboard";
+    const allowedModule = MODULE_CONFIG.find((module) => allowedIds.includes(module.id));
+    return allowedModule?.path || "/dashboard";
+  }, [allowedIds]);
+
+  const defaultLandingPath = useMemo(() => {
+    if (role === "ScannerWorker") {
+      return "/scanner-device";
+    }
+    return fallbackPath;
+  }, [role, fallbackPath]);
+
   const navItems = useMemo(
     () =>
       MODULE_CONFIG.filter((item) => allowedIds.includes(item.id)).map((item) => ({
@@ -333,8 +353,8 @@ export default function App() {
 
   const renderProtectedRoute = useCallback(
     (moduleId, element) =>
-      allowedIds.includes(moduleId) ? element : <Navigate to="/dashboard" replace />,
-    [allowedIds]
+      allowedIds.includes(moduleId) ? element : <Navigate to={fallbackPath} replace />,
+    [allowedIds, fallbackPath]
   );
 
   const isSidebarVisible = !isMobile || sidebarOpen;
@@ -383,8 +403,8 @@ export default function App() {
                   <span className="mobile-role text-truncate">{role || "ERP User"}</span>
                 </div>
               )}
-              <Routes>
-                <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                <Routes>
+                  <Route path="/" element={<Navigate to={defaultLandingPath} replace />} />
                 <Route path="/dashboard" element={renderProtectedRoute("dashboard", <Dashboard />)} />
                 <Route path="/products" element={renderProtectedRoute("products", <Products />)} />
                 <Route path="/inventory" element={renderProtectedRoute("inventory", <Inventory />)} />
@@ -416,8 +436,9 @@ export default function App() {
                 <Route path="/vendors" element={renderProtectedRoute("vendors", <Vendors />)} />
                 <Route path="/stock-alerts" element={renderProtectedRoute("stockAlerts", <StockAlerts />)} />
                 <Route path="/reports" element={renderProtectedRoute("reports", <Reports />)} />
-                <Route path="/automation" element={renderProtectedRoute("automation", <Automation />)} />
-                <Route path="/local-ai" element={renderProtectedRoute("localAI", <LocalAIPage />)} />
+                  <Route path="/automation" element={renderProtectedRoute("automation", <Automation />)} />
+                  <Route path="/local-ai" element={renderProtectedRoute("localAI", <LocalAIPage />)} />
+                  <Route path="/scanner-device" element={renderProtectedRoute("scannerDevice", <ScannerDevicePage />)} />
               </Routes>
               {toastMessage && (
                 <div className="toast show position-fixed bottom-0 end-0 m-3" role="alert" aria-live="assertive" aria-atomic="true">

@@ -1,11 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { smartErpApi } from "../services/smartErpApi";
+import DocumentAttachments from "../components/DocumentAttachments";
 
 export default function Vendors() {
   const [vendors, setVendors] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [selectedVendorId, setSelectedVendorId] = useState(null);
 
   const [form, setForm] = useState({
     vendorCode: "",
@@ -28,6 +30,17 @@ export default function Vendors() {
   };
 
   useEffect(() => { fetchVendors(); }, []);
+
+  useEffect(() => {
+    if (vendors.length > 0 && !selectedVendorId) {
+      setSelectedVendorId(vendors[0].id);
+    }
+  }, [vendors, selectedVendorId]);
+
+  const selectedVendor = useMemo(() => {
+    if (!selectedVendorId) return null;
+    return vendors.find((vendor) => vendor.id === Number(selectedVendorId)) ?? null;
+  }, [vendors, selectedVendorId]);
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -101,9 +114,9 @@ export default function Vendors() {
               <thead className="table-light">
                 <tr><th>Code</th><th>Company</th><th>Contact Person</th><th>Email</th><th>Phone</th><th>Status</th><th>Created</th></tr>
               </thead>
-              <tbody>
-                {vendors.map((vendor) => (
-                  <tr key={vendor.id}>
+          <tbody>
+            {vendors.map((vendor) => (
+              <tr key={vendor.id}>
                     <td className="fw-semibold">{vendor.vendorCode}</td>
                     <td>{vendor.name}</td>
                     <td>{vendor.contactPerson || "-"}</td>
@@ -128,6 +141,32 @@ export default function Vendors() {
             </table>
           </div>
         )}
+      </div>
+
+      <div className="mt-4">
+        <div className="d-flex flex-wrap align-items-center gap-2 mb-2">
+          <label className="form-label mb-0">Vendor documents</label>
+          <select
+            className="form-select form-select-sm"
+            value={selectedVendorId || ""}
+            onChange={(event) => {
+              const value = event.target.value;
+              setSelectedVendorId(value ? Number(value) : null);
+            }}
+          >
+            <option value="">Select a vendor</option>
+            {vendors.map((vendor) => (
+              <option key={vendor.id} value={vendor.id}>
+                {vendor.vendorCode} - {vendor.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <DocumentAttachments
+          entityType="Vendor"
+          entityId={selectedVendor?.id}
+          entityLabel={selectedVendor?.name || "Vendor"}
+        />
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { smartErpApi } from '../services/smartErpApi';
+import DocumentAttachments from '../components/DocumentAttachments';
 
 export default function PurchaseOrders() {
   const [items, setItems] = useState([]);
@@ -527,6 +528,12 @@ export default function PurchaseOrders() {
           </div>
         )}
       </div>
+
+      <DocumentAttachments
+        entityType="PurchaseOrder"
+        entityId={selectedPo?.id}
+        entityLabel={selectedPo?.poNumber || "Purchase Order"}
+      />
     </div>
   );
 }

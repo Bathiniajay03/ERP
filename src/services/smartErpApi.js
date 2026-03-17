@@ -136,6 +136,9 @@ export const smartErpApi = {
   recordSalesPayment: (payload) =>
     api.post("/payments", payload),
 
+  getInvoices: () =>
+    api.get("/api/invoices"),
+
 
   // Dashboard
   notificationsUnreadCount: () =>
@@ -186,7 +189,27 @@ export const smartErpApi = {
     api.post(`/vendor-returns/${id}/ship`, payload),
 
   refundVendorReturn: (id, payload) =>
-    api.post(`/vendor-returns/${id}/refund`, payload)
+    api.post(`/vendor-returns/${id}/refund`, payload),
+
+  listDocuments: (entityType, entityId) =>
+    api.get(`/documents/${entityType}/${entityId}`),
+
+  uploadDocument: (entityType, entityId, file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return api.post(`/documents/${entityType}/${entityId}`, formData, {
+      headers: { "Content-Type": "multipart/form-data" }
+    });
+  },
+
+  deleteDocument: (documentId) =>
+    api.delete(`/documents/${documentId}`),
+
+  documentDownloadUrl: (documentId) => {
+    const baseUrl = api.defaults.baseURL || "";
+    const base = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+    return `${base}/documents/${documentId}/download`;
+  }
 };
 
 //   shipOrder: (orderId) =>

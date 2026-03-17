@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { smartErpApi } from "../services/smartErpApi";
+import DocumentAttachments from "../components/DocumentAttachments";
 
 export default function Finance() {
   const [transactions, setTransactions] = useState([]);
@@ -13,9 +14,16 @@ export default function Finance() {
     paymentMethod: "Credit Card",
     reference: ""
   });
+  const [invoices, setInvoices] = useState([]);
+  const [invoiceLoading, setInvoiceLoading] = useState(true);
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState(null);
 
   useEffect(() => {
     fetchTransactions();
+  }, []);
+
+  useEffect(() => {
+    fetchInvoices();
   }, []);
 
   const fetchTransactions = async () => {
@@ -30,6 +38,20 @@ export default function Finance() {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchInvoices = async () => {
+    setInvoiceLoading(true);
+    try {
+      const res = await smartErpApi.getInvoices();
+      const data = res.data || [];
+      setInvoices(data);
+      setSelectedInvoiceId((prev) => prev ?? (data[0]?.id ?? null));
+    } catch (err) {
+      setError("Failed to load invoices");
+    } finally {
+      setInvoiceLoading(false);
     }
   };
 
@@ -54,6 +76,11 @@ export default function Finance() {
     t.transactionType?.toLowerCase().includes(filter.toLowerCase()) ||
     t.referenceNumber?.toLowerCase().includes(filter.toLowerCase())
   );
+
+  const selectedInvoice = useMemo(() => {
+    if (!selectedInvoiceId) return null;
+    return invoices.find((invoice) => invoice.id === Number(selectedInvoiceId)) ?? null;
+  }, [invoices, selectedInvoiceId]);
 
   return (
     <div className="dashboard-page">
@@ -180,10 +207,76 @@ export default function Finance() {
               </table>
             </div>
           )}
-        </div>
       </div>
+    </div>
 
-      {/* Payment Modal */}
+    <div className="card border-0 shadow-sm rounded-4 mt-4">
+      <div className="card-body">
+        <div className="d-flex flex-wrap align-items-center justify-content-between mb-3 gap-3">
+          <h5 className="mb-0">Invoices</h5>
+          <select
+            className="form-select form-select-sm"
+            value={selectedInvoiceId || ""}
+            onChange={(event) => {
+              const value = event.target.value;
+              setSelectedInvoiceId(value ? Number(value) : null);
+            }}
+          >
+            <option value="">Select invoice</option>
+            {invoices.map((invoice) => (
+              <option key={invoice.id} value={invoice.id}>
+                {invoice.invoiceNumber} ({invoice.salesOrderNumber || "SO"}) - ${invoice.totalAmount}
+              </option>
+            ))}
+          </select>
+        </div>
+        {invoiceLoading ? (
+          <div className="text-center py-4">
+            <div className="spinner-border text-primary" role="status">
+              <span className="visually-hidden">Loading invoices...</span>
+            </div>
+          </div>
+        ) : (
+          <div className="table-responsive">
+            <table className="table table-sm mb-0">
+              <thead className="table-light">
+                <tr>
+                  <th>Invoice #</th>
+                  <th>Sales Order</th>
+                  <th>Total</th>
+                  <th>Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoices.length === 0 ? (
+                  <tr>
+                    <td colSpan="4" className="text-muted text-center py-3">
+                      No invoices found.
+                    </td>
+                  </tr>
+                ) : (
+                  invoices.map((invoice) => (
+                    <tr key={invoice.id}>
+                      <td>{invoice.invoiceNumber}</td>
+                      <td>{invoice.salesOrderNumber || invoice.salesOrderId}</td>
+                      <td>${invoice.totalAmount}</td>
+                      <td>{new Date(invoice.createdAt).toLocaleString()}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <DocumentAttachments
+          entityType="Invoice"
+          entityId={selectedInvoice?.id}
+          entityLabel={selectedInvoice?.invoiceNumber || "Invoice"}
+        />
+      </div>
+    </div>
+
+    {/* Payment Modal */}
       {showModal && (
         <div className="modal fade show d-block" tabIndex="-1">
           <div className="modal-dialog">

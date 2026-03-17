@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { smartErpApi } from "../services/smartErpApi";
+import DocumentAttachments from "../components/DocumentAttachments";
 
 const DEFAULT_LINE = () => ({
   itemId: "",
@@ -24,6 +25,7 @@ export default function VendorReturns() {
   const [formLoading, setFormLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [actionState, setActionState] = useState({ id: null, action: "" });
+  const [selectedReturnId, setSelectedReturnId] = useState(null);
   const [returnForm, setReturnForm] = useState({
     vendorId: "",
     purchaseOrderId: "",
@@ -48,7 +50,9 @@ export default function VendorReturns() {
       setPurchaseOrders(poRes.data || []);
       setItems(itemRes.data || []);
       setWarehouses(whRes.data || []);
-      setReturns(returnsRes.data || []);
+      const returnList = returnsRes.data || [];
+      setReturns(returnList);
+      setSelectedReturnId((prev) => prev ?? (returnList[0]?.id ?? null));
       setMessage("");
     } catch (err) {
       setMessage(err?.response?.data || "Unable to load vendor return data.");
@@ -194,6 +198,11 @@ export default function VendorReturns() {
       })),
     [returns]
   );
+
+  const selectedReturn = useMemo(() => {
+    if (!selectedReturnId) return null;
+    return returns.find((item) => item.id === Number(selectedReturnId)) ?? null;
+  }, [returns, selectedReturnId]);
 
   const displayPurchaseOrders = purchaseOrders.map((po) => ({
     id: po.id,
@@ -402,9 +411,9 @@ export default function VendorReturns() {
             <span className="badge bg-secondary">{returns.length} records</span>
           </div>
 
-          <div className="table-responsive">
-            <table className="table table-hover">
-              <thead>
+        <div className="table-responsive">
+          <table className="table table-hover">
+            <thead>
                 <tr>
                   <th>Return #</th>
                   <th>Vendor</th>
@@ -466,6 +475,32 @@ export default function VendorReturns() {
             </table>
           </div>
         </div>
+      </div>
+
+      <div className="mt-4">
+        <div className="d-flex flex-wrap align-items-center gap-2 mb-2">
+          <label className="form-label mb-0">Attachments for</label>
+          <select
+            className="form-select form-select-sm"
+            value={selectedReturnId || ""}
+            onChange={(event) => {
+              const val = event.target.value;
+              setSelectedReturnId(val ? Number(val) : null);
+            }}
+          >
+            <option value="">Select a return</option>
+            {returns.map((ret) => (
+              <option key={ret.id} value={ret.id}>
+                {ret.returnNumber}
+              </option>
+            ))}
+          </select>
+        </div>
+        <DocumentAttachments
+          entityType="VendorReturn"
+          entityId={selectedReturn?.id}
+          entityLabel={selectedReturn?.returnNumber || "Vendor Return"}
+        />
       </div>
     </div>
   );
