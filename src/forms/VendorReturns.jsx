@@ -477,7 +477,7 @@ export default function VendorReturns() {
         </div>
       </div>
 
-      <div className="mt-4">
+      {/* <div className="mt-4">
         <div className="d-flex flex-wrap align-items-center gap-2 mb-2">
           <label className="form-label mb-0">Attachments for</label>
           <select
@@ -501,7 +501,7 @@ export default function VendorReturns() {
           entityId={selectedReturn?.id}
           entityLabel={selectedReturn?.returnNumber || "Vendor Return"}
         />
-      </div>
+      </div> */}
     </div>
   );
 }

@@ -149,6 +149,58 @@
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.5);
 }
 
+.operations-section {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 16px 40px;
+}
+
+.operations-section .operations-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 15px 40px rgba(15, 23, 42, 0.08);
+}
+
+.operations-section .operations-card {
+  margin-top: 24px;
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 15px 40px rgba(15, 23, 42, 0.1);
+}
+
+.operations-section .operation-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.operations-section .form-actions button {
+  flex: 1;
+  min-width: 160px;
+  border-radius: 10px;
+  border: none;
+  font-weight: 700;
+}
+
+.operations-section .lot-summary,
+.operations-section .scanner-panel {
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  background: #f8fafc;
+}
+
+.operations-section input,
+.operations-section select,
+.operations-section button {
+  font-family: inherit;
+}
+
 @media (max-width: 576px) {
   .login-card {
     padding: 22px;

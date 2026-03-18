@@ -529,11 +529,11 @@ export default function PurchaseOrders() {
         )}
       </div>
 
-      <DocumentAttachments
+      {/* <DocumentAttachments
         entityType="PurchaseOrder"
         entityId={selectedPo?.id}
         entityLabel={selectedPo?.poNumber || "Purchase Order"}
-      />
+      /> */}
     </div>
   );
 }

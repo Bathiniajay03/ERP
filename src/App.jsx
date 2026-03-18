@@ -15,6 +15,7 @@ import AdminPanel from "./forms/AdminPanel";
 import VendorReturns from "./forms/VendorReturns";
 import Inventory from "./forms/Inventory";
 import Finance from "./forms/Finance";
+import Lots from "./forms/Lots";
 
 import Customers from "./forms/Customers";
 import Notifications from "./forms/Notifications";
@@ -28,7 +29,7 @@ import { smartErpApi } from "./services/smartErpApi";
 import { LocalAIProvider } from "./context/LocalAIContext";
 
 const AUTO_LOGOUT_MS = 5 * 60 * 1000;
-const ROLE_MODULES_VERSION = 2;
+const ROLE_MODULES_VERSION = 3;
 const ROLE_MODULES_KEY = "erp_role_modules";
 const ROLE_MODULES_VERSION_KEY = "erp_role_modules_version";
 
@@ -49,6 +50,7 @@ const MODULE_CONFIG = [
     path: "/notifications"
   },
   { id: "warehouses", label: "Warehouses", path: "/warehouses" },
+  { id: "lots", label: "Lot Tracking", path: "/lots" },
   { id: "vendors", label: "Vendors", path: "/vendors" },
   { id: "stockAlerts", label: "Stock Alerts", path: "/stock-alerts" },
   { id: "reports", label: "Reports", path: "/reports" },
@@ -73,6 +75,7 @@ const DEFAULT_ROLE_MODULES = {
     "customers",
     "notifications",
     "warehouses",
+    "lots",
     "vendors",
     "stockAlerts",
     "reports",
@@ -84,6 +87,7 @@ const DEFAULT_ROLE_MODULES = {
     "dashboard",
     "products",
     "inventory",
+    "finance",
     "operations",
     "salesOrderList",
     "createSalesOrder",
@@ -109,6 +113,7 @@ const DEFAULT_ROLE_MODULES = {
     "vendors",
     "stockAlerts",
     "warehouses",
+    "lots",
     "notifications",
     "vendorReturns",
     "scannerDevice"
@@ -117,6 +122,7 @@ const DEFAULT_ROLE_MODULES = {
     "dashboard",
     "finance",
     "reports",
+    "lots",
     "notifications",
     "salesOrderList",
     "purchaseOrders",
@@ -433,6 +439,7 @@ export default function App() {
                 <Route path="/customers" element={renderProtectedRoute("customers", <Customers />)} />
                 <Route path="/notifications" element={renderProtectedRoute("notifications", <Notifications />)} />
                 <Route path="/warehouses" element={renderProtectedRoute("warehouses", <Warehouses />)} />
+                <Route path="/lots" element={renderProtectedRoute("lots", <Lots />)} />
                 <Route path="/vendors" element={renderProtectedRoute("vendors", <Vendors />)} />
                 <Route path="/stock-alerts" element={renderProtectedRoute("stockAlerts", <StockAlerts />)} />
                 <Route path="/reports" element={renderProtectedRoute("reports", <Reports />)} />

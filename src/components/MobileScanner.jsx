@@ -1,694 +1,423 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { smartErpApi } from '../services/smartErpApi';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
+import api from '../services/apiClient';
 
-const SCAN_COOLDOWN_MS = 800;
+const SCAN_COOLDOWN_MS = 1200;
 
-export default function MobileScanner() {
-  const manualInputRef = useRef(null);
+const normalizeCode = (code) => (code || '').trim().toLowerCase();
+
+export default function MobileScanner({ items = [], warehouses = [], inventory = [], fetchData = () => {} }) {
   const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  
-  const [mode, setMode] = useState('selectMode');
+  const codeReaderRef = useRef(null);
+  const lastScan = useRef({ barcode: '', timestamp: 0 });
+
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState('');
-  const [detectedBarcode, setDetectedBarcode] = useState('');
-  const [currentItem, setCurrentItem] = useState(null);
-  
-  const [stockInData, setStockInData] = useState({
-    quantity: 1,
-    warehouseId: '',
-    lotNumber: ''
-  });
-  
-  const [stockOutData, setStockOutData] = useState({
-    quantity: 1,
-    warehouseId: '',
-    lotNumber: ''
-  });
-  
-  const [warehouses, setWarehouses] = useState([]);
-  const [stockInfo, setStockInfo] = useState([]);
+  const [manualInput, setManualInput] = useState('');
   const [status, setStatus] = useState({ type: '', text: '' });
+  const [currentItem, setCurrentItem] = useState(null);
+  const [detectedBarcode, setDetectedBarcode] = useState('');
+  const defaultWarehouseId = warehouses.length ? String(warehouses[0].id) : '';
+  const [txForm, setTxForm] = useState({
+    itemId: '',
+    warehouseId: defaultWarehouseId,
+    lotId: '',
+    quantity: '',
+    lotNumber: '',
+    prefix: ''
+  });
   const [loading, setLoading] = useState(false);
-  const [items, setItems] = useState([]);
-  const lastScan = useRef({ barcode: '', timestamp: 0 });
 
   const showStatus = useCallback((type, text) => {
     setStatus({ type, text });
     setTimeout(() => setStatus({ type: '', text: '' }), 4000);
   }, []);
 
-  const focusInput = useCallback(() => {
-    setTimeout(() => {
-      if (manualInputRef.current) manualInputRef.current.focus();
-    }, 100);
-  }, []);
+  const matchingLots = useMemo(() => {
+    const itemId = parseInt(txForm.itemId, 10);
+    const warehouseId = parseInt(txForm.warehouseId, 10);
+    if (!itemId || !warehouseId) return [];
+    return inventory.filter((record) => record.itemId === itemId && record.warehouseId === warehouseId);
+  }, [inventory, txForm]);
+
+  const fetchItemDetails = useCallback(async (code) => {
+    setCurrentItem(null);
+    setDetectedBarcode(code);
+    try {
+      const normalized = normalizeCode(code);
+      const match = items.find(
+        (item) =>
+          normalizeCode(item.barcode) === normalized ||
+          normalizeCode(item.itemCode) === normalized
+      );
+      if (!match) {
+        showStatus('error', `Item not found: ${code}`);
+        return null;
+      }
+      setCurrentItem(match);
+      setTxForm((prev) => ({
+        ...prev,
+        itemId: match.id,
+        warehouseId: prev.warehouseId || String(warehouses[0]?.id || '')
+      }));
+      showStatus('success', `Scanned: ${match.itemCode}`);
+      return match;
+    } catch (err) {
+      console.error('Fetch item failed', err);
+      showStatus('error', 'Failed to load item data');
+      return null;
+    }
+  }, [items, showStatus, warehouses]);
+
+  const handleDetectedCode = useCallback(async (code) => {
+    const trimmed = (code || '').trim();
+    if (!trimmed) return;
+    const now = Date.now();
+    if (
+      trimmed !== lastScan.current.barcode ||
+      now - lastScan.current.timestamp >= SCAN_COOLDOWN_MS
+    ) {
+      lastScan.current = { barcode: trimmed, timestamp: now };
+      setDetectedBarcode(trimmed);
+      await fetchItemDetails(trimmed);
+    }
+  }, [fetchItemDetails]);
+
+  useEffect(() => {
+    if (!txForm.warehouseId && warehouses.length > 0) {
+      setTxForm((prev) => ({ ...prev, warehouseId: String(warehouses[0].id) }));
+    }
+  }, [txForm.warehouseId, warehouses]);
+
+  const handleManualSubmit = async (e) => {
+    e.preventDefault();
+    if (!manualInput) return;
+    await handleDetectedCode(manualInput);
+    setManualInput('');
+  };
 
   const stopCamera = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
+    try {
+      codeReaderRef.current?.reset();
+    } catch (error) {
+      console.error('Camera cleanup failed', error);
     }
     setCameraActive(false);
   }, []);
 
-  const startCamera = useCallback(async () => {
+  const startCamera = useCallback(() => {
+    if (!videoRef.current) return;
+    setCameraError('');
     try {
-      setCameraError('');
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      });
-
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        setCameraActive(true);
-        showStatus('success', '✓ Camera opened - Scan barcode or type manually');
+      if (codeReaderRef.current) {
+        codeReaderRef.current.reset();
+      } else {
+        codeReaderRef.current = new BrowserMultiFormatReader();
       }
+
+      codeReaderRef.current
+        .decodeFromVideoDevice(
+          undefined,
+          videoRef.current,
+          (result, error) => {
+            if (result) {
+              handleDetectedCode(result.getText());
+            }
+            if (error && !(error instanceof NotFoundException)) {
+              console.error('Decode error', error);
+            }
+          }
+        )
+        .catch((err) => {
+          console.error('Camera error:', err);
+          setCameraError(`Camera unavailable: ${err.message}`);
+          setCameraActive(false);
+          showStatus('warning', 'Camera denied – using manual entry');
+        });
+
+      setCameraActive(true);
+      showStatus('success', 'Camera ready – point at a barcode');
     } catch (err) {
-      console.error('Camera error:', err);
+      console.error('Start camera failed', err);
       setCameraError(`Camera unavailable: ${err.message}`);
       setCameraActive(false);
-      showStatus('warning', '⚠️ Camera denied - Using manual input only');
+      showStatus('warning', 'Camera denied – use manual entry');
     }
-  }, [showStatus]);
-
-  const fetchInitialData = useCallback(async () => {
-    try {
-      const [itemsRes, whRes] = await Promise.all([
-        smartErpApi.stockItems(),
-        smartErpApi.warehouses()
-      ]);
-      const itemsData = Array.isArray(itemsRes.data) ? itemsRes.data : [];
-      const whData = Array.isArray(whRes.data) ? whRes.data : [];
-
-      setItems(itemsData);
-      setWarehouses(whData);
-
-      if (whData.length > 0) {
-        const firstWarehouseId = String(whData[0].id);
-        setStockInData(prev => ({ ...prev, warehouseId: firstWarehouseId }));
-        setStockOutData(prev => ({ ...prev, warehouseId: firstWarehouseId }));
-      }
-    } catch (error) {
-      console.error('Failed to load initial data', error);
-      showStatus('error', '❌ Failed to load warehouses and items');
-    }
-  }, [showStatus]);
+  }, [handleDetectedCode, showStatus]);
 
   useEffect(() => {
-    fetchInitialData();
-  }, [fetchInitialData]);
-
-  useEffect(() => {
-    if (mode !== 'selectMode') {
-      startCamera();
-      focusInput();
-    } else {
-      stopCamera();
-    }
+    startCamera();
     return stopCamera;
-  }, [mode, startCamera, focusInput, stopCamera]);
-
-  const handleBarcodeInput = async (e) => {
-    if (e.key !== 'Enter') return;
-    
-    const code = e.target.value.trim();
-    if (!code) return;
-
-    const now = Date.now();
-    if (code !== lastScan.current.barcode || now - lastScan.current.timestamp >= SCAN_COOLDOWN_MS) {
-      lastScan.current = { barcode: code, timestamp: now };
-      setDetectedBarcode(code);
-      await fetchItemDetails(code);
-      e.target.value = '';
-    }
-  };
-
-  const fetchItemDetails = async (barcode) => {
-    setCurrentItem(null);
-    setStockInfo([]);
-    try {
-      const normalized = (barcode || '').trim().toLowerCase();
-      const match = items.find(
-        (item) =>
-          (item.barcode || '').toLowerCase() === normalized ||
-          (item.itemCode || '').toLowerCase() === normalized
-      );
-
-      if (!match) {
-        showStatus('error', '❌ Item not found: ' + barcode);
-        return;
-      }
-
-      setCurrentItem(match);
-      const inventoryRes = await smartErpApi.stockInventory();
-      const filtered = (inventoryRes.data || []).filter(
-        (record) => record.itemId === match.id
-      );
-      setStockInfo(filtered);
-      showStatus('success', `✅ Scanned: ${match.itemCode} - ${match.description || ''}`);
-    } catch (error) {
-      console.error('Fetch item failed', error);
-      showStatus('error', 'Failed to load item details');
-    }
-  };
+  }, [startCamera, stopCamera]);
 
   const handleStockIn = async () => {
-    if (!currentItem) {
-      showStatus('error', '⚠️ Please scan an item first');
-      return;
+    if (!txForm.itemId || !txForm.warehouseId || !txForm.quantity) {
+      return showStatus('error', 'Provide item, warehouse, and quantity');
     }
-    if (!stockInData.warehouseId || stockInData.warehouseId === '') {
-      showStatus('error', '⚠️ Please select a warehouse');
-      focusInput();
-      return;
-    }
-    const qty = Number(stockInData.quantity);
-    if (!qty || qty <= 0) {
-      showStatus('error', '⚠️ Quantity must be greater than 0');
-      return;
-    }
-
     setLoading(true);
     try {
-      await smartErpApi.receiveInventory({
-        itemId: currentItem.id,
-        quantity: qty,
-        warehouseId: Number(stockInData.warehouseId),
-        lotNumber: stockInData.lotNumber.trim() || null
-      });
-      showStatus('success', '✅ Stock IN saved successfully!');
-      resetStockIn();
-    } catch (error) {
-      console.error('Stock IN failed', error);
-      showStatus('error', error?.response?.data?.message || 'Failed to save stock');
+      const payload = {
+        itemId: parseInt(txForm.itemId, 10),
+        warehouseId: parseInt(txForm.warehouseId, 10),
+        quantity: parseFloat(txForm.quantity),
+        lotNumber: txForm.lotNumber || null
+      };
+      await api.post('/stock/in', payload);
+      showStatus('success', 'Stock IN recorded');
+      setTxForm((prev) => ({ ...prev, quantity: '', lotNumber: '', lotId: '' }));
+      fetchData();
+    } catch (err) {
+      console.error('Stock IN failed', err);
+      showStatus('error', err.response?.data || 'Stock IN failed');
     } finally {
       setLoading(false);
     }
   };
 
   const handleStockOut = async () => {
-    if (!currentItem) {
-      showStatus('error', '⚠️ Please scan an item first');
-      return;
+    if (!txForm.itemId || !txForm.warehouseId || !txForm.lotId || !txForm.quantity) {
+      return showStatus('error', 'Provide item, warehouse, lot, and quantity');
     }
-    if (!stockOutData.warehouseId || stockOutData.warehouseId === '') {
-      showStatus('error', '⚠️ Please select a warehouse');
-      focusInput();
-      return;
-    }
-    const qty = Number(stockOutData.quantity);
-    if (!qty || qty <= 0) {
-      showStatus('error', '⚠️ Quantity must be greater than 0');
-      return;
-    }
-
     setLoading(true);
     try {
-      await smartErpApi.deviceEvent({
-        deviceType: 'MobileScanner',
-        eventType: 'StockOut',
-        payload: detectedBarcode,
-        itemId: currentItem.id,
-        quantity: qty,
-        warehouseId: Number(stockOutData.warehouseId),
-        lotNumber: stockOutData.lotNumber.trim() || null
+      await api.post('/stock/out', {
+        itemId: parseInt(txForm.itemId, 10),
+        warehouseId: parseInt(txForm.warehouseId, 10),
+        lotId: parseInt(txForm.lotId, 10),
+        quantity: parseFloat(txForm.quantity)
       });
-      showStatus('success', '✅ Stock OUT saved successfully!');
-      resetStockOut();
-    } catch (error) {
-      console.error('Stock OUT failed', error);
-      showStatus('error', error?.response?.data?.message || 'Failed to save stock out');
+      showStatus('success', 'Stock OUT recorded');
+      setTxForm((prev) => ({ ...prev, quantity: '', lotId: '' }));
+      fetchData();
+    } catch (err) {
+      console.error('Stock OUT failed', err);
+      showStatus('error', err.response?.data || 'Stock OUT failed');
     } finally {
       setLoading(false);
     }
   };
 
-  const resetStockIn = () => {
-    setDetectedBarcode('');
-    setCurrentItem(null);
-    setStockInfo([]);
-    setStockInData(prev => ({ ...prev, quantity: 1, lotNumber: '' }));
-    focusInput();
-  };
-
-  const resetStockOut = () => {
-    setDetectedBarcode('');
-    setCurrentItem(null);
-    setStockInfo([]);
-    setStockOutData(prev => ({ ...prev, quantity: 1, lotNumber: '' }));
-    focusInput();
-  };
-
-  const mapWarehouseName = (warehouseId) => {
-    const wh = warehouses.find((w) => w.id === warehouseId);
-    return wh ? wh.name : 'Unknown';
-  };
-
-  // MODE SELECTION
-  if (mode === 'selectMode') {
-    return (
-      <div style={styles.container}>
-        <div style={styles.header}>
-          <h1 style={styles.title}>📦 Mobile Operations</h1>
-          <p style={styles.subtitle}>Select operation type</p>
-        </div>
-
-        <div style={styles.modeGrid}>
-          <button
-            onClick={() => {
-              setMode('stockIn');
-              resetStockIn();
-            }}
-            style={styles.modeButton}
-          >
-            <div style={styles.modeIcon}>📥</div>
-            <div style={styles.modeName}>Stock IN</div>
-            <div style={styles.modeDescription}>Receive inventory</div>
-          </button>
-
-          <button
-            onClick={() => {
-              setMode('stockOut');
-              resetStockOut();
-            }}
-            style={styles.modeButton}
-          >
-            <div style={styles.modeIcon}>📤</div>
-            <div style={styles.modeName}>Stock OUT</div>
-            <div style={styles.modeDescription}>Issue inventory</div>
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // STOCK IN / OUT SCREENS
-  const isStockIn = mode === 'stockIn';
-  const operationData = isStockIn ? stockInData : stockOutData;
-  const setOperationData = isStockIn ? setStockInData : setStockOutData;
-  const handleSave = isStockIn ? handleStockIn : handleStockOut;
+  const currentWarehouseId = parseInt(txForm.warehouseId, 10);
 
   return (
     <div style={styles.container}>
-      <div style={styles.header}>
-        <button onClick={() => setMode('selectMode')} style={styles.backButton}>
-          ← Back
-        </button>
-        <h1 style={styles.title}>{isStockIn ? '📥 Stock IN' : '📤 Stock OUT'}</h1>
+      <div style={styles.cameraWrapper}>
+        <video ref={videoRef} style={styles.video} autoPlay muted playsInline />
+        <div style={styles.scanOverlay}>
+          <div style={styles.scanLine} />
+          <p style={styles.cameraHint}>{cameraActive ? 'Point camera at barcode' : 'Starting camera...'}</p>
+        </div>
       </div>
 
+      {cameraError && <div style={styles.cameraError}>⚠️ {cameraError}</div>}
+
       {status.text && (
-        <div
-          style={{
-            ...styles.statusBox,
-            backgroundColor: status.type === 'success' ? '#dcfce7' : status.type === 'warning' ? '#fef3c7' : '#fee2e2',
-            borderColor: status.type === 'success' ? '#86efac' : status.type === 'warning' ? '#fcd34d' : '#fca5a5',
-            color: status.type === 'success' ? '#166534' : status.type === 'warning' ? '#92400e' : '#991b1b'
-          }}
-        >
+        <div style={statusStyle(
+          status.type === 'success' ? '#dcfce7' : '#fee2e2',
+          status.type === 'success' ? '#166534' : '#991b1b'
+        )}>
           {status.text}
         </div>
       )}
 
-      {cameraActive && (
-        <div style={styles.cameraSection}>
-          <video ref={videoRef} autoPlay playsInline muted style={styles.videoElement} />
-          <div style={styles.cameraOverlay}>
-            <div style={styles.scanLine}></div>
-            <p style={styles.cameraText}>Point at barcode</p>
-          </div>
-        </div>
-      )}
-
-      {cameraError && <div style={styles.cameraErrorBox}>⚠️ {cameraError}</div>}
-
-      <div style={styles.scanSection}>
-        <label style={styles.label}>
-          {cameraActive ? '📱 Or type barcode manually' : '🔍 Enter Barcode'}
-        </label>
+      <form onSubmit={handleManualSubmit} style={styles.manualForm}>
         <input
-          ref={manualInputRef}
           type="text"
-          placeholder={cameraActive ? "Type or scan..." : "Type barcode and press Enter..."}
-          onKeyUp={handleBarcodeInput}
-          autoFocus
-          style={styles.input}
+          placeholder="Type barcode and press Enter"
+          value={manualInput}
+          onChange={(e) => setManualInput(e.target.value)}
+          style={styles.manualInput}
         />
-      </div>
+        <button type="submit" style={styles.manualButton} disabled={!manualInput}>Lookup</button>
+      </form>
 
       {currentItem && (
         <div style={styles.itemCard}>
-          <p style={{ marginTop: 0, color: '#166534', fontWeight: '600' }}>✓ Item Found</p>
-          <p style={styles.itemText}><strong>Code:</strong> {currentItem.itemCode}</p>
-          <p style={styles.itemText}><strong>Name:</strong> {currentItem.description || '—'}</p>
-          <p style={styles.itemText}><strong>Barcode:</strong> {currentItem.barcode || '—'}</p>
+          <p><strong>{currentItem.itemCode}</strong> · {currentItem.description}</p>
+          <p className="text-muted" style={{ fontSize: '0.9rem' }}>Detected barcode: {detectedBarcode}</p>
         </div>
       )}
 
-      {currentItem && stockInfo.length > 0 && (
-        <div style={styles.stockCard}>
-          <strong style={{ display: 'block', marginBottom: '10px' }}>📊 Current Stock</strong>
-          {stockInfo.map((record, idx) => (
-            <div key={idx} style={styles.stockRow}>
-              <span>{mapWarehouseName(record.warehouseId)}</span>
-              <span>{record.lotNumber || '—'}</span>
-              <span style={{ fontWeight: '600' }}>Qty: {record.quantity || 0}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {currentItem && (
-        <div style={styles.formCard}>
-          <div style={styles.formGrid}>
-            <label style={styles.formLabel}>
-              <span style={styles.labelText}>Warehouse *</span>
-              <select
-                value={operationData.warehouseId || ''}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  if (value) {
-                    setOperationData(prev => ({ ...prev, warehouseId: value }));
-                  }
-                }}
-                style={styles.select}
-              >
-                <option value="">-- Select Warehouse --</option>
-                {warehouses && warehouses.length > 0 ? (
-                  warehouses.map((w) => (
-                    <option key={w.id} value={String(w.id)}>
-                      {w.name}
-                    </option>
-                  ))
-                ) : (
-                  <option disabled>No warehouses available</option>
-                )}
-              </select>
-            </label>
-
-            <label style={styles.formLabel}>
-              <span style={styles.labelText}>Quantity *</span>
-              <input
-                type="number"
-                min="1"
-                value={operationData.quantity}
-                onChange={(e) => setOperationData(prev => ({ ...prev, quantity: e.target.value }))}
-                style={styles.inputField}
-              />
-            </label>
-
-            <label style={styles.formLabel}>
-              <span style={styles.labelText}>Lot Number</span>
-              <input
-                type="text"
-                placeholder="Optional"
-                value={operationData.lotNumber}
-                onChange={(e) => setOperationData(prev => ({ ...prev, lotNumber: e.target.value }))}
-                style={styles.inputField}
-              />
-            </label>
-          </div>
-
-          <button
-            onClick={handleSave}
-            disabled={loading || !currentItem}
-            style={{
-              ...styles.saveButton,
-              opacity: !currentItem || loading ? 0.5 : 1,
-              cursor: !currentItem || loading ? 'not-allowed' : 'pointer'
-            }}
+      <div style={styles.txGrid}>
+        <div>
+          <label style={styles.label}>Warehouse</label>
+          <select
+            value={txForm.warehouseId}
+            onChange={(e) => setTxForm({ ...txForm, warehouseId: e.target.value })}
+            style={styles.select}
           >
-            {loading ? '⏳ Saving...' : (isStockIn ? '✓ Save Stock IN' : '✓ Save Stock OUT')}
-          </button>
-
-          <button
-            onClick={() => (isStockIn ? resetStockIn() : resetStockOut())}
-            style={styles.clearButton}
-          >
-            Clear Form
-          </button>
+            <option value="">Select warehouse</option>
+            {warehouses.map((w) => (
+              <option key={w.id} value={w.id}>{w.name}</option>
+            ))}
+          </select>
         </div>
-      )}
+        <div>
+          <label style={styles.label}>Lot</label>
+          <select
+            value={txForm.lotId}
+            onChange={(e) => setTxForm({ ...txForm, lotId: e.target.value })}
+            style={styles.select}
+          >
+            <option value="">Select lot</option>
+            {matchingLots.map((lot) => (
+              <option key={lot.lotId} value={lot.lotId}>{lot.lotNumber || 'Unassigned'} (Qty: {lot.quantity})</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label style={styles.label}>Quantity</label>
+          <input
+            type="number"
+            value={txForm.quantity}
+            onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })}
+            style={styles.input}
+          />
+        </div>
+        <div>
+          <label style={styles.label}>Lot Number (IN)</label>
+          <input
+            type="text"
+            value={txForm.lotNumber}
+            onChange={(e) => setTxForm({ ...txForm, lotNumber: e.target.value })}
+            style={styles.input}
+          />
+        </div>
+      </div>
+
+      <div style={styles.buttonRow}>
+        <button type="button" onClick={handleStockIn} disabled={loading} style={{ ...styles.actionBtn, backgroundColor: '#10b981' }}>
+          {loading ? 'Processing...' : 'Stock IN'}
+        </button>
+        <button type="button" onClick={handleStockOut} disabled={loading} style={{ ...styles.actionBtn, backgroundColor: '#ef4444' }}>
+          {loading ? 'Processing...' : 'Stock OUT'}
+        </button>
+      </div>
     </div>
   );
 }
 
+const statusStyle = (background, color) => ({
+  margin: '12px 0',
+  padding: '10px',
+  borderRadius: '8px',
+  background,
+  color,
+  display: 'flex',
+  justifyContent: 'space-between'
+});
+
 const styles = {
-  container: { 
-    padding: 'max(16px, 2vw)', 
-    background: '#f5f7fb', 
-    minHeight: '100vh', 
-    fontFamily: 'system-ui',
-    maxWidth: '1200px',
-    margin: '0 auto'
+  container: {
+    padding: '16px',
+    background: '#f5f7fb',
+    minHeight: '100vh'
   },
-  header: { 
-    position: 'relative', 
-    marginBottom: '28px', 
-    textAlign: 'center',
-    paddingTop: '10px'
+  cameraWrapper: {
+    position: 'relative',
+    borderRadius: '12px',
+    overflow: 'hidden',
+    background: '#000',
+    minHeight: '240px',
+    marginBottom: '16px'
   },
-  backButton: { 
-    position: 'absolute', 
-    left: '0', 
-    top: '0', 
-    padding: '10px 16px', 
-    background: '#6b7280', 
-    color: '#fff', 
-    border: 'none', 
-    borderRadius: '6px', 
-    cursor: 'pointer', 
-    fontWeight: '600', 
-    fontSize: '15px',
-    transition: 'background 0.2s'
+  video: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover'
   },
-  title: { 
-    margin: '0 0 8px', 
-    fontSize: 'clamp(24px, 6vw, 32px)', 
-    color: '#1a365d', 
-    fontWeight: '700' 
-  },
-  subtitle: { 
-    margin: '0', 
-    fontSize: 'clamp(13px, 3vw, 16px)', 
-    color: '#64748b' 
-  },
-  modeGrid: { 
-    display: 'grid', 
-    gridTemplateColumns: '1fr 1fr', 
-    gap: 'clamp(12px, 4vw, 24px)', 
-    marginTop: '40px' 
-  },
-  modeButton: { 
-    padding: 'clamp(20px, 5vw, 32px) clamp(16px, 4vw, 24px)', 
-    background: '#fff', 
-    border: '2px solid #cbd5e1', 
-    borderRadius: '12px', 
-    cursor: 'pointer', 
-    fontSize: '16px', 
-    textAlign: 'center', 
-    boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-    transition: 'all 0.3s'
-  },
-  modeIcon: { 
-    fontSize: 'clamp(40px, 10vw, 56px)', 
-    marginBottom: '16px' 
-  },
-  modeName: { 
-    fontSize: 'clamp(16px, 4vw, 20px)', 
-    fontWeight: '700', 
-    color: '#1a365d', 
-    marginBottom: '8px' 
-  },
-  modeDescription: { 
-    fontSize: 'clamp(12px, 2.5vw, 14px)', 
-    color: '#64748b' 
-  },
-  statusBox: { 
-    padding: '14px 18px', 
-    borderRadius: '8px', 
-    border: '1px solid', 
-    marginBottom: '20px', 
-    fontWeight: '500',
-    fontSize: '14px',
-    animation: 'slideIn 0.3s ease'
-  },
-  cameraSection: { 
-    position: 'relative', 
-    background: '#000', 
-    borderRadius: '12px', 
-    overflow: 'hidden', 
-    marginBottom: '20px', 
-    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-    aspectRatio: '16 / 9',
-    width: '100%'
-  },
-  videoElement: { 
-    width: '100%', 
-    height: '100%', 
-    display: 'block', 
-    objectFit: 'cover' 
-  },
-  cameraOverlay: { 
-    position: 'absolute', 
-    top: 0, 
-    left: 0, 
-    right: 0, 
-    bottom: 0, 
-    display: 'flex', 
-    flexDirection: 'column', 
-    alignItems: 'center', 
-    justifyContent: 'center', 
-    pointerEvents: 'none' 
-  },
-  scanLine: { 
-    width: '70%', 
-    height: '4px', 
-    background: '#10b981', 
-    borderRadius: '2px', 
-    marginBottom: '16px', 
-    boxShadow: '0 0 15px #10b981',
-    animation: 'pulse 2s infinite'
-  },
-  cameraText: { 
-    color: '#fff', 
-    fontSize: '16px', 
-    fontWeight: '600', 
-    textShadow: '0 2px 4px rgba(0,0,0,0.5)', 
-    margin: 0 
-  },
-  cameraErrorBox: { 
-    background: '#fee2e2', 
-    color: '#991b1b', 
-    padding: '14px 16px', 
-    borderRadius: '8px', 
-    marginBottom: '18px', 
-    fontSize: '14px', 
-    border: '2px solid #fca5a5' 
-  },
-  scanSection: { 
-    background: '#fff', 
-    padding: '20px', 
-    borderRadius: '10px', 
-    marginBottom: '20px', 
-    boxShadow: '0 1px 3px rgba(0,0,0,0.1)' 
-  },
-  label: { 
-    display: 'block', 
-    fontWeight: '700', 
-    color: '#1a365d', 
-    marginBottom: '12px', 
-    fontSize: 'clamp(13px, 3vw, 15px)' 
-  },
-  input: { 
-    width: '100%', 
-    padding: '14px 16px', 
-    border: '2px solid #cbd5e1', 
-    borderRadius: '8px', 
-    fontSize: '16px', 
-    boxSizing: 'border-box',
-    transition: 'border-color 0.2s'
-  },
-  itemCard: { 
-    background: '#fff', 
-    padding: '18px', 
-    borderRadius: '10px', 
-    marginBottom: '18px', 
-    border: '2px solid #86efac', 
-    boxShadow: '0 2px 6px rgba(0,0,0,0.08)' 
-  },
-  itemText: { 
-    margin: '8px 0', 
-    fontSize: 'clamp(13px, 2.5vw, 14px)', 
-    color: '#334155',
-    lineHeight: '1.5'
-  },
-  stockCard: { 
-    background: '#f0f9ff', 
-    padding: '18px', 
-    borderRadius: '10px', 
-    marginBottom: '18px', 
-    fontSize: 'clamp(13px, 2.5vw, 14px)', 
-    border: '2px solid #e0f2fe' 
-  },
-  stockRow: { 
-    display: 'flex', 
-    justifyContent: 'space-between', 
+  scanOverlay: {
+    position: 'absolute',
+    inset: 0,
+    display: 'flex',
+    flexDirection: 'column',
     alignItems: 'center',
-    padding: '10px 0', 
-    borderBottom: '1px solid #e0f2fe',
-    gap: '12px'
+    justifyContent: 'center',
+    pointerEvents: 'none'
   },
-  formCard: { 
-    background: '#fff', 
-    padding: '24px', 
-    borderRadius: '10px', 
-    boxShadow: '0 2px 6px rgba(0,0,0,0.08)' 
+  scanLine: {
+    width: '70%',
+    height: '3px',
+    background: '#10b981',
+    borderRadius: '999px',
+    boxShadow: '0 0 10px rgba(16,185,129,0.8)'
   },
-  formGrid: { 
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-    gap: '18px', 
-    marginBottom: '22px' 
+  cameraHint: {
+    color: '#fff',
+    fontWeight: '600',
+    marginTop: '12px',
+    textShadow: '0 2px 8px rgba(0,0,0,0.6)'
   },
-  formLabel: { 
-    display: 'flex', 
-    flexDirection: 'column' 
+  cameraError: {
+    background: '#fee2e2',
+    color: '#991b1b',
+    padding: '10px',
+    borderRadius: '8px',
+    marginBottom: '12px'
   },
-  labelText: { 
-    fontWeight: '700', 
-    color: '#1a365d', 
-    fontSize: 'clamp(13px, 3vw, 15px)', 
-    marginBottom: '8px' 
+  manualForm: {
+    display: 'flex',
+    gap: '10px',
+    marginBottom: '16px'
   },
-  select: { 
-    padding: '12px 14px', 
-    border: '2px solid #cbd5e1', 
-    borderRadius: '8px', 
-    fontSize: '14px', 
-    boxSizing: 'border-box',
+  manualInput: {
+    flex: 1,
+    padding: '10px 14px',
+    borderRadius: '8px',
+    border: '1px solid #cbd5e1'
+  },
+  manualButton: {
+    padding: '0 18px',
+    borderRadius: '8px',
+    border: 'none',
+    background: '#2563eb',
+    color: '#fff',
+    cursor: 'pointer'
+  },
+  itemCard: {
     background: '#fff',
-    cursor: 'pointer',
-    transition: 'border-color 0.2s'
+    padding: '14px',
+    borderRadius: '10px',
+    marginBottom: '16px',
+    boxShadow: '0 8px 16px rgba(15,23,42,0.08)'
   },
-  inputField: { 
-    padding: '12px 14px', 
-    border: '2px solid #cbd5e1', 
-    borderRadius: '8px', 
-    fontSize: '14px', 
-    boxSizing: 'border-box',
-    transition: 'border-color 0.2s'
+  txGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+    gap: '12px',
+    marginBottom: '16px'
   },
-  saveButton: { 
-    width: '100%', 
-    padding: '16px', 
-    background: '#10b981', 
-    color: '#fff', 
-    border: 'none', 
-    borderRadius: '8px', 
-    fontWeight: '700', 
-    fontSize: 'clamp(14px, 3vw, 16px)', 
-    marginBottom: '12px', 
-    cursor: 'pointer',
-    transition: 'all 0.2s',
-    boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)'
+  label: {
+    display: 'block',
+    marginBottom: '4px',
+    fontSize: '0.85rem',
+    fontWeight: '600',
+    color: '#0f172a'
   },
-  clearButton: { 
-    width: '100%', 
-    padding: '14px', 
-    background: '#e2e8f0', 
-    color: '#1a365d', 
-    border: 'none', 
-    borderRadius: '8px', 
-    fontWeight: '600', 
-    fontSize: 'clamp(13px, 3vw, 15px)', 
-    cursor: 'pointer',
-    transition: 'all 0.2s'
+  select: {
+    width: '100%',
+    padding: '10px',
+    borderRadius: '8px',
+    border: '1px solid #cbd5e1'
+  },
+  input: {
+    width: '100%',
+    padding: '10px',
+    borderRadius: '8px',
+    border: '1px solid #cbd5e1'
+  },
+  buttonRow: {
+    display: 'flex',
+    gap: '10px',
+    flexWrap: 'wrap'
+  },
+  actionBtn: {
+    flex: 1,
+    padding: '12px',
+    border: 'none',
+    borderRadius: '10px',
+    color: '#fff',
+    fontWeight: '600',
+    cursor: 'pointer'
   }
 };

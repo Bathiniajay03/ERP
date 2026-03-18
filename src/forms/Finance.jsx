@@ -4,6 +4,7 @@ import DocumentAttachments from "../components/DocumentAttachments";
 
 export default function Finance() {
   const [transactions, setTransactions] = useState([]);
+  const [vendorReturns, setVendorReturns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("");
@@ -23,6 +24,10 @@ export default function Finance() {
   }, []);
 
   useEffect(() => {
+    fetchVendorReturns();
+  }, []);
+
+  useEffect(() => {
     fetchInvoices();
   }, []);
 
@@ -38,6 +43,15 @@ export default function Finance() {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchVendorReturns = async () => {
+    try {
+      const res = await smartErpApi.getVendorReturns();
+      setVendorReturns(res.data || []);
+    } catch (err) {
+      console.error("Failed to load vendor returns", err);
     }
   };
 
@@ -98,15 +112,15 @@ export default function Finance() {
 
       {error && <div className="alert alert-danger">{error}</div>}
 
-      <div className="row mb-4">
-        <div className="col-md-3">
-          <div className="card">
-            <div className="card-body">
-              <h6 className="text-muted">Total Transactions</h6>
-              <h3>{transactions.length}</h3>
+        <div className="row mb-4">
+          <div className="col-md-3">
+            <div className="card">
+              <div className="card-body">
+                <h6 className="text-muted">Total Transactions</h6>
+                <h3>{transactions.length}</h3>
+              </div>
             </div>
           </div>
-        </div>
         <div className="col-md-3">
           <div className="card">
             <div className="card-body">
@@ -135,6 +149,14 @@ export default function Finance() {
             </div>
           </div>
         </div>
+        <div className="col-md-3">
+          <div className="card">
+            <div className="card-body">
+              <h6 className="text-muted">Vendor Transactions</h6>
+              <h3 className="text-primary">{vendorReturns.length}</h3>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="card">
@@ -148,7 +170,7 @@ export default function Finance() {
             onChange={(e) => setFilter(e.target.value)}
           />
         </div>
-        <div className="card-body p-0">
+          <div className="card-body p-0">
           {loading ? (
             <div className="text-center py-5">
               <div className="spinner-border text-primary" role="status">
@@ -207,6 +229,56 @@ export default function Finance() {
               </table>
             </div>
           )}
+      </div>
+    </div>
+
+    <div className="card border-0 shadow-sm rounded-4 mt-4">
+      <div className="card-body">
+        <div className="d-flex flex-wrap align-items-center justify-content-between mb-3 gap-3">
+          <h5 className="mb-0">Vendor Transactions</h5>
+          <input
+            type="text"
+            className="form-control form-control-sm w-auto"
+            placeholder="Filter vendors..."
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          />
+        </div>
+        <div className="table-responsive">
+          <table className="table table-hover mb-0">
+            <thead className="table-light">
+              <tr>
+                <th>#</th>
+                <th>Vendor</th>
+                <th>Return Number</th>
+                <th>Total Amount</th>
+                <th>Status</th>
+                <th>Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {vendorReturns
+                .filter((vendor) =>
+                  vendor.vendorName?.toLowerCase().includes(filter.toLowerCase()) ||
+                  vendor.returnNumber?.toLowerCase().includes(filter.toLowerCase())
+                )
+                .map((vendor) => (
+                  <tr key={vendor.id}>
+                    <td>#{vendor.id}</td>
+                    <td>{vendor.vendorName || vendor.vendorId}</td>
+                    <td>{vendor.returnNumber}</td>
+                    <td>${(vendor.totalAmount || 0).toFixed(2)}</td>
+                    <td>
+                      <span className={`badge ${vendor.status === "Completed" ? "bg-success" : "bg-warning"}`}>
+                        {vendor.status}
+                      </span>
+                    </td>
+                    <td>{new Date(vendor.createdAt).toLocaleDateString()}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
 
