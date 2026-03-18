@@ -47,19 +47,34 @@ export default function MobileScanner({
     return inventory.filter((record) => record.itemId === itemId && record.warehouseId === warehouseId);
   }, [inventory, txForm]);
 
+  const findMatchingItem = useCallback(
+    (searchValue) => {
+      const normalizedSearch = normalizeCode(searchValue);
+      if (!normalizedSearch) return null;
+
+      return items.find((item) => {
+        const barcodeSource = item.barcode ?? item.Barcode;
+        const itemCodeSource = item.itemCode ?? item.ItemCode;
+        const normalizedBarcode = normalizeCode(barcodeSource);
+        const normalizedItemCode = normalizeCode(itemCodeSource);
+        const matches =
+          (normalizedBarcode && (normalizedSearch === normalizedBarcode || normalizedSearch.includes(normalizedBarcode) || normalizedBarcode.includes(normalizedSearch))) ||
+          (normalizedItemCode && (normalizedSearch === normalizedItemCode || normalizedSearch.includes(normalizedItemCode) || normalizedItemCode.includes(normalizedSearch)));
+        return matches;
+      }) ?? null;
+    },
+    [items]
+  );
+
   const fetchItemDetails = useCallback(async (code) => {
     setCurrentItem(null);
     setDetectedBarcode(code);
     try {
-      const normalized = normalizeCode(code);
-      const match = items.find(
-        (item) =>
-          normalizeCode(item.barcode) === normalized ||
-          normalizeCode(item.itemCode) === normalized
-      );
+      const normalizedForPending = normalizeCode(code);
+      const match = findMatchingItem(code);
       if (!match) {
-        if (!items.length) {
-          setPendingBarcode((prev) => prev || normalized);
+        if (!items.length && normalizedForPending) {
+          setPendingBarcode((prev) => prev || normalizedForPending);
           return null;
         }
         showStatus('error', `Item not found: ${code}`);
