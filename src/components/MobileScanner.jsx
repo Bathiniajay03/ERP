@@ -34,7 +34,6 @@ export default function MobileScanner({
     prefix: ''
   });
   const [loading, setLoading] = useState(false);
-  const [pendingBarcode, setPendingBarcode] = useState('');
 
   const showStatus = useCallback((type, text) => {
     setStatus({ type, text });
@@ -48,91 +47,58 @@ export default function MobileScanner({
     return inventory.filter((record) => record.itemId === itemId && record.warehouseId === warehouseId);
   }, [inventory, txForm]);
 
-  const findMatchingItem = useCallback(
-    (searchValue) => {
-      const normalizedSearch = normalizeCode(searchValue);
-      const sanitizedSearch = normalizeForMatching(searchValue);
-      if (!normalizedSearch && !sanitizedSearch) return null;
-
-      return items.find((item) => {
-        const barcodeSource = item.barcode ?? item.Barcode ?? '';
-        const itemCodeSource = item.itemCode ?? item.ItemCode ?? '';
-        const normalizedBarcode = normalizeCode(barcodeSource);
-        const normalizedItemCode = normalizeCode(itemCodeSource);
-        const sanitizedBarcode = normalizeForMatching(barcodeSource);
-        const sanitizedItemCode = normalizeForMatching(itemCodeSource);
-        const matches =
-          (normalizedBarcode && (normalizedSearch === normalizedBarcode || normalizedSearch.includes(normalizedBarcode) || normalizedBarcode.includes(normalizedSearch))) ||
-          (normalizedItemCode && (normalizedSearch === normalizedItemCode || normalizedSearch.includes(normalizedItemCode) || normalizedItemCode.includes(normalizedSearch)));
-        const sanitizedMatches =
-          (sanitizedBarcode && sanitizedSearch && (sanitizedSearch === sanitizedBarcode || sanitizedSearch.includes(sanitizedBarcode) || sanitizedBarcode.includes(sanitizedSearch))) ||
-          (sanitizedItemCode && sanitizedSearch && (sanitizedSearch === sanitizedItemCode || sanitizedSearch.includes(sanitizedItemCode) || sanitizedItemCode.includes(sanitizedSearch)));
-        return matches || sanitizedMatches;
-      }) ?? null;
-    },
-    [items]
-  );
-
-  const fetchItemDetails = useCallback(async (code) => {
-    setCurrentItem(null);
-    setDetectedBarcode(code);
+  const stopCamera = useCallback(() => {
     try {
-      const normalizedForPending = normalizeCode(code);
-      const match = findMatchingItem(code);
-      if (!match) {
-        if (!items.length && normalizedForPending) {
-          setPendingBarcode((prev) => prev || normalizedForPending);
-          return null;
+      codeReaderRef.current?.reset();
+    } catch (error) {
+      console.error('Camera cleanup failed', error);
+    }
+    setCameraActive(false);
+  }, []);
+
+  const resolveBarcode = useCallback(
+    async (barcodeValue) => {
+      const trimmed = (barcodeValue || '').trim();
+      if (!trimmed) return null;
+      setCurrentItem(null);
+      setDetectedBarcode(trimmed);
+      try {
+        const response = await api.get(`/items/barcode/${encodeURIComponent(trimmed)}`);
+        const item = response.data;
+        setCurrentItem({
+          itemId: item.itemId,
+          itemCode: item.itemCode,
+          description: item.itemName
+        });
+        const defaultWarehouseId = warehouses[0]?.id ?? '';
+        setTxForm((prev) => ({
+          ...prev,
+          itemId: String(item.itemId),
+          warehouseId: prev.warehouseId || (defaultWarehouseId ? String(defaultWarehouseId) : '')
+        }));
+        onScanDetected({
+          itemId: item.itemId,
+          warehouseId: defaultWarehouseId,
+          lotId: null,
+          lotNumber: ''
+        });
+        showStatus('success', `Scanned: ${item.itemCode}`);
+        stopCamera();
+        fetchData();
+        return item;
+      } catch (err) {
+        console.error('Barcode lookup failed', err);
+        const status = err?.response?.status;
+        if (status === 404) {
+          showStatus('error', 'Item not found for OUT');
+        } else {
+          showStatus('error', 'Failed to resolve barcode');
         }
-        showStatus('error', `Item not found: ${code}`);
         return null;
       }
-      setCurrentItem(match);
-      setTxForm((prev) => ({
-        ...prev,
-        itemId: match.id,
-        warehouseId: prev.warehouseId || String(warehouses[0]?.id || '')
-      }));
-      const parsedWarehouseId = parseInt(txForm.warehouseId, 10);
-      const defaultWarehouseId = Number.isNaN(parsedWarehouseId)
-        ? warehouses[0]?.id
-        : parsedWarehouseId;
-      let matchedLot = null;
-      if (defaultWarehouseId) {
-        matchedLot = inventory.find((record) => {
-          const recordWarehouseId = record.warehouseId ?? record.WarehouseId;
-          const recordItemId = record.itemId ?? record.ItemId;
-          const recordQuantity = Number(record.quantity ?? record.Quantity ?? 0);
-          return (
-            recordItemId === match.id &&
-            recordWarehouseId === defaultWarehouseId &&
-            recordQuantity > 0
-          );
-        });
-      }
-      const payload = { itemId: match.id };
-      if (defaultWarehouseId) {
-        payload.warehouseId = defaultWarehouseId;
-      }
-      if (matchedLot) {
-        const lotIdValue = matchedLot.lotId ?? matchedLot.LotId;
-        const lotNumberValue = matchedLot.lotNumber ?? matchedLot.LotNumber;
-        if (lotIdValue) {
-          payload.lotId = lotIdValue;
-        }
-        if (lotNumberValue) {
-          payload.lotNumber = lotNumberValue;
-        }
-      }
-      onScanDetected(payload);
-      showStatus('success', `Scanned: ${match.itemCode}`);
-      return match;
-    } catch (err) {
-      console.error('Fetch item failed', err);
-      showStatus('error', 'Failed to load item data');
-      return null;
-    }
-  }, [items, inventory, onScanDetected, showStatus, txForm.warehouseId, warehouses]);
+    },
+    [fetchData, onScanDetected, showStatus, stopCamera, warehouses]
+  );
 
   const handleDetectedCode = useCallback(async (code) => {
     const trimmed = (code || '').trim();
@@ -143,10 +109,9 @@ export default function MobileScanner({
       now - lastScan.current.timestamp >= SCAN_COOLDOWN_MS
     ) {
       lastScan.current = { barcode: trimmed, timestamp: now };
-      setDetectedBarcode(trimmed);
-      await fetchItemDetails(trimmed);
+      await resolveBarcode(trimmed);
     }
-  }, [fetchItemDetails]);
+  }, [resolveBarcode]);
 
   useEffect(() => {
     if (!txForm.warehouseId && warehouses.length > 0) {
@@ -160,23 +125,6 @@ export default function MobileScanner({
     await handleDetectedCode(manualInput);
     setManualInput('');
   };
-
-  useEffect(() => {
-    if (pendingBarcode && items.length) {
-      const code = pendingBarcode;
-      setPendingBarcode('');
-      fetchItemDetails(code);
-    }
-  }, [fetchItemDetails, items.length, pendingBarcode]);
-
-  const stopCamera = useCallback(() => {
-    try {
-      codeReaderRef.current?.reset();
-    } catch (error) {
-      console.error('Camera cleanup failed', error);
-    }
-    setCameraActive(false);
-  }, []);
 
   const startCamera = useCallback(() => {
     if (!videoRef.current) return;
@@ -239,6 +187,8 @@ export default function MobileScanner({
       showStatus('success', 'Stock IN recorded');
       setTxForm((prev) => ({ ...prev, quantity: '', lotNumber: '', lotId: '' }));
       fetchData();
+      startCamera();
+      startCamera();
     } catch (err) {
       console.error('Stock IN failed', err);
       showStatus('error', err.response?.data || 'Stock IN failed');

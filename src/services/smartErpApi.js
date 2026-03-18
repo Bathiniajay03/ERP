@@ -174,6 +174,12 @@ export const smartErpApi = {
   stockTransactions: () =>
     api.get("/stock/transactions"),
 
+  getItemByBarcode: (barcode) =>
+    api.get(`/items/barcode/${encodeURIComponent(barcode)}`),
+
+  checkItemBarcode: (barcode) =>
+    api.get(`/items/barcode-check/${encodeURIComponent(barcode)}`),
+
 
   // Vendor Returns
   createVendorReturn: (payload) =>
