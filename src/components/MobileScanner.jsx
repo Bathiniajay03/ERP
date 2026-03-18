@@ -5,6 +5,7 @@ import api from '../services/apiClient';
 const SCAN_COOLDOWN_MS = 1200;
 
 const normalizeCode = (code) => (code || '').trim().toLowerCase();
+const normalizeForMatching = (code) => (code || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 export default function MobileScanner({
   items = [],
@@ -50,17 +51,23 @@ export default function MobileScanner({
   const findMatchingItem = useCallback(
     (searchValue) => {
       const normalizedSearch = normalizeCode(searchValue);
-      if (!normalizedSearch) return null;
+      const sanitizedSearch = normalizeForMatching(searchValue);
+      if (!normalizedSearch && !sanitizedSearch) return null;
 
       return items.find((item) => {
-        const barcodeSource = item.barcode ?? item.Barcode;
-        const itemCodeSource = item.itemCode ?? item.ItemCode;
+        const barcodeSource = item.barcode ?? item.Barcode ?? '';
+        const itemCodeSource = item.itemCode ?? item.ItemCode ?? '';
         const normalizedBarcode = normalizeCode(barcodeSource);
         const normalizedItemCode = normalizeCode(itemCodeSource);
+        const sanitizedBarcode = normalizeForMatching(barcodeSource);
+        const sanitizedItemCode = normalizeForMatching(itemCodeSource);
         const matches =
           (normalizedBarcode && (normalizedSearch === normalizedBarcode || normalizedSearch.includes(normalizedBarcode) || normalizedBarcode.includes(normalizedSearch))) ||
           (normalizedItemCode && (normalizedSearch === normalizedItemCode || normalizedSearch.includes(normalizedItemCode) || normalizedItemCode.includes(normalizedSearch)));
-        return matches;
+        const sanitizedMatches =
+          (sanitizedBarcode && sanitizedSearch && (sanitizedSearch === sanitizedBarcode || sanitizedSearch.includes(sanitizedBarcode) || sanitizedBarcode.includes(sanitizedSearch))) ||
+          (sanitizedItemCode && sanitizedSearch && (sanitizedSearch === sanitizedItemCode || sanitizedSearch.includes(sanitizedItemCode) || sanitizedItemCode.includes(sanitizedSearch)));
+        return matches || sanitizedMatches;
       }) ?? null;
     },
     [items]
