@@ -53,6 +53,17 @@ export default function Operations() {
     }
   }, []);
 
+  const handleScannerPopulate = useCallback((payload) => {
+    if (!payload) return;
+    setTxForm((prev) => ({
+      ...prev,
+      ...(payload.itemId ? { itemId: String(payload.itemId) } : {}),
+      ...(payload.warehouseId ? { warehouseId: String(payload.warehouseId) } : {}),
+      ...(payload.lotNumber ? { lotNumber: payload.lotNumber } : {}),
+      ...(payload.lotId ? { lotId: String(payload.lotId) } : {})
+    }));
+  }, []);
+
   useEffect(() => {
     fetchData();
   }, [fetchData]);
@@ -268,6 +279,7 @@ export default function Operations() {
               warehouses={warehouses}
               inventory={inventory}
               fetchData={fetchData}
+              onScanDetected={handleScannerPopulate}
             />
           </div>
           <p className="operations-scanner-callout">

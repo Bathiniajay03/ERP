@@ -6,7 +6,13 @@ const SCAN_COOLDOWN_MS = 1200;
 
 const normalizeCode = (code) => (code || '').trim().toLowerCase();
 
-export default function MobileScanner({ items = [], warehouses = [], inventory = [], fetchData = () => {} }) {
+export default function MobileScanner({
+  items = [],
+  warehouses = [],
+  inventory = [],
+  fetchData = () => {},
+  onScanDetected = () => {}
+}) {
   const videoRef = useRef(null);
   const codeReaderRef = useRef(null);
   const lastScan = useRef({ barcode: '', timestamp: 0 });
@@ -60,6 +66,38 @@ export default function MobileScanner({ items = [], warehouses = [], inventory =
         itemId: match.id,
         warehouseId: prev.warehouseId || String(warehouses[0]?.id || '')
       }));
+      const parsedWarehouseId = parseInt(txForm.warehouseId, 10);
+      const defaultWarehouseId = Number.isNaN(parsedWarehouseId)
+        ? warehouses[0]?.id
+        : parsedWarehouseId;
+      let matchedLot = null;
+      if (defaultWarehouseId) {
+        matchedLot = inventory.find((record) => {
+          const recordWarehouseId = record.warehouseId ?? record.WarehouseId;
+          const recordItemId = record.itemId ?? record.ItemId;
+          const recordQuantity = Number(record.quantity ?? record.Quantity ?? 0);
+          return (
+            recordItemId === match.id &&
+            recordWarehouseId === defaultWarehouseId &&
+            recordQuantity > 0
+          );
+        });
+      }
+      const payload = { itemId: match.id };
+      if (defaultWarehouseId) {
+        payload.warehouseId = defaultWarehouseId;
+      }
+      if (matchedLot) {
+        const lotIdValue = matchedLot.lotId ?? matchedLot.LotId;
+        const lotNumberValue = matchedLot.lotNumber ?? matchedLot.LotNumber;
+        if (lotIdValue) {
+          payload.lotId = lotIdValue;
+        }
+        if (lotNumberValue) {
+          payload.lotNumber = lotNumberValue;
+        }
+      }
+      onScanDetected(payload);
       showStatus('success', `Scanned: ${match.itemCode}`);
       return match;
     } catch (err) {
@@ -67,7 +105,7 @@ export default function MobileScanner({ items = [], warehouses = [], inventory =
       showStatus('error', 'Failed to load item data');
       return null;
     }
-  }, [items, showStatus, warehouses]);
+  }, [items, inventory, onScanDetected, showStatus, txForm.warehouseId, warehouses]);
 
   const handleDetectedCode = useCallback(async (code) => {
     const trimmed = (code || '').trim();
