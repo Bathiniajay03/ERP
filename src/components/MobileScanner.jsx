@@ -33,6 +33,7 @@ export default function MobileScanner({
     prefix: ''
   });
   const [loading, setLoading] = useState(false);
+  const [pendingBarcode, setPendingBarcode] = useState('');
 
   const showStatus = useCallback((type, text) => {
     setStatus({ type, text });
@@ -57,6 +58,10 @@ export default function MobileScanner({
           normalizeCode(item.itemCode) === normalized
       );
       if (!match) {
+        if (!items.length) {
+          setPendingBarcode((prev) => prev || normalized);
+          return null;
+        }
         showStatus('error', `Item not found: ${code}`);
         return null;
       }
@@ -133,6 +138,14 @@ export default function MobileScanner({
     await handleDetectedCode(manualInput);
     setManualInput('');
   };
+
+  useEffect(() => {
+    if (pendingBarcode && items.length) {
+      const code = pendingBarcode;
+      setPendingBarcode('');
+      fetchItemDetails(code);
+    }
+  }, [fetchItemDetails, items.length, pendingBarcode]);
 
   const stopCamera = useCallback(() => {
     try {
