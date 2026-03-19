@@ -449,7 +449,7 @@ export default function App() {
                 <Route path="/reports" element={renderProtectedRoute("reports", <Reports />)} />
                   <Route path="/automation" element={renderProtectedRoute("automation", <Automation />)} />
                   <Route path="/local-ai" element={renderProtectedRoute("localAI", <LocalAIPage />)} />
-                  <Route path="/scanner-device" element={renderProtectedRoute("scannerDevice", <ScannerDevicePage />)} />
+                  <Route path="/scanner-device" element={renderProtectedRoute("scannerDevice", <Operations />)} />
               </Routes>
               {toastMessage && (
                 <div className="toast show position-fixed bottom-0 end-0 m-3" role="alert" aria-live="assertive" aria-atomic="true">
