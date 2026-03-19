@@ -112,8 +112,11 @@ export default function MobileScanner({
           lotId: payload.inventory?.lotId ?? null,
           lotNumber: payload.inventory?.lotNumber ?? ''
         });
-        const statusMessage = payload.isNew ? 'New item auto-created' : `Scanned: ${payload.itemCode}`;
-        showStatus('success', statusMessage);
+        const statusType = payload.isNew ? 'info' : 'success';
+        const statusMessage = payload.isNew
+          ? `New item auto-created (${payload.itemCode})`
+          : `Scanned: ${payload.itemCode}`;
+        showStatus(statusType, statusMessage);
         stopCamera();
         fetchData();
         recordBarcodeScan(trimmed);
@@ -215,17 +218,21 @@ export default function MobileScanner({
         itemId: parseInt(txForm.itemId, 10),
         warehouseId: parseInt(txForm.warehouseId, 10),
         quantity: parseFloat(txForm.quantity),
-        lotNumber: txForm.lotNumber || null
+        lotNumber: txForm.lotNumber?.trim() || null
       };
-      await api.post('/stock/in', payload);
-      showStatus('success', 'Stock IN recorded');
-      setTxForm((prev) => ({ ...prev, itemId: '', quantity: '', lotNumber: '', lotId: '' }));
-      resetScanState();
-      fetchData();
-      void startCamera();
+      const response = await api.post('/stock/in', payload);
+      const payloadMessage = response.data?.message || 'Stock IN recorded';
+      const statusType = response.data?.success ? 'success' : 'error';
+      showStatus(statusType, payloadMessage);
+      if (response.data?.success !== false) {
+        setTxForm((prev) => ({ ...prev, itemId: '', quantity: '', lotNumber: '', lotId: '' }));
+        resetScanState();
+        fetchData();
+        void startCamera();
+      }
     } catch (err) {
       console.error('Stock IN failed', err);
-      showStatus('error', err.response?.data || 'Stock IN failed');
+      showStatus('error', err.response?.data?.message || err.response?.data || 'Stock IN failed');
     } finally {
       setLoading(false);
     }
@@ -237,20 +244,25 @@ export default function MobileScanner({
     }
     setLoading(true);
     try {
-      await api.post('/stock/out', {
+      const payload = {
         itemId: parseInt(txForm.itemId, 10),
         warehouseId: parseInt(txForm.warehouseId, 10),
         lotId: parseInt(txForm.lotId, 10),
         quantity: parseFloat(txForm.quantity)
-      });
-      showStatus('success', 'Stock OUT recorded');
-      setTxForm((prev) => ({ ...prev, itemId: '', quantity: '', lotId: '' }));
-      resetScanState();
-      fetchData();
-      void startCamera();
+      };
+      const response = await api.post('/stock/out', payload);
+      const message = response.data?.message || 'Stock OUT recorded';
+      const statusType = response.data?.success ? 'success' : 'error';
+      showStatus(statusType, message);
+      if (response.data?.success !== false) {
+        setTxForm((prev) => ({ ...prev, itemId: '', quantity: '', lotId: '' }));
+        resetScanState();
+        fetchData();
+        void startCamera();
+      }
     } catch (err) {
       console.error('Stock OUT failed', err);
-      showStatus('error', err.response?.data || 'Stock OUT failed');
+      showStatus('error', err.response?.data?.message || err.response?.data || 'Stock OUT failed');
     } finally {
       setLoading(false);
     }
@@ -269,10 +281,7 @@ export default function MobileScanner({
       {cameraError && <div style={styles.cameraError}>⚠️ {cameraError}</div>}
 
       {status.text && (
-        <div style={statusStyle(
-          status.type === 'success' ? '#dcfce7' : '#fee2e2',
-          status.type === 'success' ? '#166534' : '#991b1b'
-        )}>
+        <div style={statusStyle(status.type)}>
           {status.text}
         </div>
       )}
@@ -354,15 +363,25 @@ export default function MobileScanner({
   );
 }
 
-const statusStyle = (background, color) => ({
-  margin: '12px 0',
-  padding: '10px',
-  borderRadius: '8px',
-  background,
-  color,
-  display: 'flex',
-  justifyContent: 'space-between'
-});
+const statusStyle = (type) => {
+  const palette = {
+    success: { background: '#dcfce7', color: '#166534', border: '#166534' },
+    info: { background: '#e0f2fe', color: '#0369a1', border: '#0369a1' },
+    warning: { background: '#fef3c7', color: '#92400e', border: '#92400e' },
+    error: { background: '#fee2e2', color: '#991b1b', border: '#991b1b' }
+  };
+  const style = palette[type] || palette.error;
+  return {
+    margin: '12px 0',
+    padding: '10px',
+    borderRadius: '8px',
+    border: `1px solid ${style.border}`,
+    background: style.background,
+    color: style.color,
+    display: 'flex',
+    justifyContent: 'space-between'
+  };
+};
 
 const styles = {
   container: {

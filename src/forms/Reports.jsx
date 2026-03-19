@@ -20,7 +20,7 @@ export default function Reports() {
       const [dashRes, analyticsRes, txRes, itemRes, whRes] = await Promise.allSettled([
         api.get('/smart-erp/dashboard/realtime'),
         api.get('/smart-erp/analytics/report'),
-        api.get('/stock/transactions'),
+        api.get('/reports/transactions'),
         api.get('/stock/items'),
         api.get('/warehouses')
       ]);

@@ -21,6 +21,13 @@ const formatStatusMessage = (value) => {
   return String(value);
 };
 
+const STATUS_PALETTE = {
+  success: { background: '#dcfce7', color: '#166534', border: '#166534' },
+  info: { background: '#e0f2fe', color: '#035b99', border: '#0284c7' },
+  warning: { background: '#fef3c7', color: '#92400e', border: '#92400e' },
+  error: { background: '#fee2e2', color: '#991b1b', border: '#991b1b' }
+};
+
 export default function Operations() {
   const [items, setItems] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
@@ -140,11 +147,11 @@ export default function Operations() {
       const payload = {
         itemId: serialGenerationForm.itemId,
         warehouseId: parseInt(serialGenerationForm.warehouseId, 10),
-        qty: parseFloat(serialGenerationForm.quantity),
-        lotNumber: serialGenerationForm.lotNumber.trim() || null
+        quantity: parseFloat(serialGenerationForm.quantity),
+        lotNumber: serialGenerationForm.lotNumber?.trim() || null
       };
 
-      await api.post('/stock/in', null, { params: payload });
+      const response = await api.post('/stock/in', payload);
 
       const inventoryRes = await api.get('/stock/inventory');
       const inventoryList = inventoryRes.data || [];
@@ -166,8 +173,9 @@ export default function Operations() {
           lotId
         });
       }
-
-      showStatus('success', `Stock IN & ${serialGenerationForm.quantity} serials synced!`);
+      const message = response.data?.message || `Stock IN & ${serialGenerationForm.quantity} serials synced!`;
+      const statusType = response.data?.success ? 'success' : 'error';
+      showStatus(statusType, message);
       setShowSerialModal(false);
       setTxForm({ itemId: '', warehouseId: '', destWarehouseId: '', quantity: '', lotNumber: '', lotId: '', prefix: '' });
       fetchData();
@@ -192,27 +200,37 @@ export default function Operations() {
     }
 
     try {
-      const params = {
-        itemId: parseInt(txForm.itemId, 10),
-        warehouseId: parseInt(txForm.warehouseId, 10),
-        qty: parseFloat(txForm.quantity)
-      };
-      if (txMode === 'out' || txMode === 'transfer') {
-        params.lotId = parseInt(txForm.lotId, 10);
-      }
+      let response;
       if (txMode === 'transfer') {
-        params.destWhId = parseInt(txForm.destWarehouseId, 10);
-      }
-      if (txMode === 'in' && txForm.lotNumber) {
-        params.lotNumber = txForm.lotNumber;
+        const params = {
+          itemId: parseInt(txForm.itemId, 10),
+          warehouseId: parseInt(txForm.warehouseId, 10),
+          lotId: parseInt(txForm.lotId, 10),
+          qty: parseFloat(txForm.quantity),
+          destWhId: parseInt(txForm.destWarehouseId, 10)
+        };
+        response = await api.post(`/stock/${txMode}`, null, { params });
+        showStatus('success', response?.data || `Stock ${txMode.toUpperCase()} successful`);
+      } else {
+        const payload = {
+          itemId: parseInt(txForm.itemId, 10),
+          warehouseId: parseInt(txForm.warehouseId, 10),
+          quantity: parseFloat(txForm.quantity),
+          lotId: txMode === 'out' ? parseInt(txForm.lotId, 10) : undefined,
+          lotNumber: txMode === 'in' ? txForm.lotNumber?.trim() || null : undefined
+        };
+        const prunedPayload = Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined));
+        response = await api.post(`/stock/${txMode}`, prunedPayload);
+        const message = response.data?.message || `Stock ${txMode.toUpperCase()} successful`;
+        const type = response.data?.success ? 'success' : 'error';
+        showStatus(type, message);
       }
 
-      await api.post(`/stock/${txMode}`, null, { params });
-      showStatus('success', `Stock ${txMode.toUpperCase()} successful`);
       setTxForm({ itemId: '', warehouseId: '', destWarehouseId: '', quantity: '', lotNumber: '', lotId: '', prefix: '' });
       fetchData();
     } catch (err) {
-      showStatus('error', err.response?.data || 'Transaction failed');
+      const message = err.response?.data?.message || err.response?.data || 'Transaction failed';
+      showStatus('error', formatStatusMessage(message));
     }
   };
 
@@ -249,9 +267,9 @@ export default function Operations() {
         <div
           className="status-alert"
           style={{
-            backgroundColor: status.type === 'success' ? '#dcfce7' : '#fee2e2',
-            color: status.type === 'success' ? '#166534' : '#991b1b',
-            borderColor: status.type === 'success' ? '#166534' : '#991b1b'
+            backgroundColor: (STATUS_PALETTE[status.type] || STATUS_PALETTE.error).background,
+            color: (STATUS_PALETTE[status.type] || STATUS_PALETTE.error).color,
+            borderColor: (STATUS_PALETTE[status.type] || STATUS_PALETTE.error).border
           }}
         >
           {status.text}
