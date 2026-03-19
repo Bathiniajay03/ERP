@@ -21,6 +21,7 @@ export default function MobileScanner({
   const [status, setStatus] = useState({ type: '', text: '' });
   const [currentItem, setCurrentItem] = useState(null);
   const [detectedBarcode, setDetectedBarcode] = useState('');
+  const [lastScannedBarcode, setLastScannedBarcode] = useState('');
   const defaultWarehouseId = warehouses.length ? String(warehouses[0].id) : '';
   const [txForm, setTxForm] = useState({
     itemId: '',
@@ -51,6 +52,22 @@ export default function MobileScanner({
       console.error('Camera enumeration failed', error);
       return undefined;
     }
+  }, []);
+
+  const recordBarcodeScan = useCallback((barcode) => {
+    const previousBarcode = lastScannedBarcode;
+    setTxForm((prev) => {
+      const prevQty = parseInt(prev.quantity, 10) || 0;
+      const nextQty = barcode === previousBarcode ? prevQty + 1 : 1;
+      return { ...prev, quantity: String(nextQty) };
+    });
+    setLastScannedBarcode(barcode);
+  }, [lastScannedBarcode]);
+
+  const resetScanState = useCallback(() => {
+    setLastScannedBarcode('');
+    setDetectedBarcode('');
+    setCurrentItem(null);
   }, []);
 
   const matchingLots = useMemo(() => {
@@ -99,6 +116,7 @@ export default function MobileScanner({
         showStatus('success', statusMessage);
         stopCamera();
         fetchData();
+        recordBarcodeScan(trimmed);
         return payload;
       } catch (err) {
         console.error('Barcode lookup failed', err);
@@ -111,7 +129,7 @@ export default function MobileScanner({
         return null;
       }
     },
-    [fetchData, onScanDetected, showStatus, stopCamera, warehouses]
+    [fetchData, onScanDetected, showStatus, stopCamera, warehouses, recordBarcodeScan]
   );
 
   const handleDetectedCode = useCallback(async (code) => {
@@ -201,7 +219,8 @@ export default function MobileScanner({
       };
       await api.post('/stock/in', payload);
       showStatus('success', 'Stock IN recorded');
-      setTxForm((prev) => ({ ...prev, quantity: '', lotNumber: '', lotId: '' }));
+      setTxForm((prev) => ({ ...prev, itemId: '', quantity: '', lotNumber: '', lotId: '' }));
+      resetScanState();
       fetchData();
       void startCamera();
     } catch (err) {
@@ -225,7 +244,8 @@ export default function MobileScanner({
         quantity: parseFloat(txForm.quantity)
       });
       showStatus('success', 'Stock OUT recorded');
-      setTxForm((prev) => ({ ...prev, quantity: '', lotId: '' }));
+      setTxForm((prev) => ({ ...prev, itemId: '', quantity: '', lotId: '' }));
+      resetScanState();
       fetchData();
       void startCamera();
     } catch (err) {
