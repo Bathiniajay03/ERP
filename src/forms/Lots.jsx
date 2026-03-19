@@ -39,20 +39,24 @@ export default function Lots() {
     return inventory.map((entry) => {
       const warehouse = warehousesById.get(entry.WarehouseId);
       const item = itemsById.get(entry.ItemId);
-      const lotNumber = entry.LotNumber === "-" || !entry.LotNumber ? "General Inventory" : entry.LotNumber;
-      const quantity = Number(entry.Quantity || entry.quantity || 0);
+      const lotNumber =
+        (entry.lotNumber || entry.LotNumber || entry.lotId || "").trim() === "-" ||
+        !(entry.lotNumber || entry.LotNumber)
+          ? "General Inventory"
+          : entry.lotNumber || entry.LotNumber;
+      const quantity = Number(entry.quantity || entry.Quantity || 0);
       const storageHint = warehouse?.name || item?.WarehouseLocation || "Main Storage";
 
       return {
-        id: entry.Id,
-        lotId: entry.LotId,
+        id: entry.id ?? entry.Id,
+        lotId: entry.lotId ?? entry.LotId,
         lotNumber,
         itemCode: item?.itemCode || `Item-${entry.itemId}`,
         itemName: item?.description || "Unknown product",
         warehouseName: warehouse?.name || `WH-${entry.warehouseId}`,
         quantity,
         storage: storageHint,
-        locationCode: entry.LocationCode || item?.WarehouseLocation || "N/A"
+        locationCode: entry.locationCode || entry.LocationCode || item?.WarehouseLocation || "N/A"
       };
     });
   }, [inventory, items, warehouses]);

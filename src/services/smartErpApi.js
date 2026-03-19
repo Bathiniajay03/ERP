@@ -174,6 +174,9 @@ export const smartErpApi = {
   stockTransactions: () =>
     api.get("/stock/transactions"),
 
+  reportsTransactions: () =>
+    api.get("/reports/transactions"),
+
   getItemByBarcode: (barcode) =>
     api.get(`/items/barcode/${encodeURIComponent(barcode)}`),
 

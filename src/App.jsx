@@ -83,6 +83,10 @@ const DEFAULT_ROLE_MODULES = {
     "vendorReturns",
     "scannerDevice"
   ],
+  Operator: [
+    "operations",
+    "scannerDevice"
+  ],
   OperationsWorker: [
     "dashboard",
     "products",

@@ -34,9 +34,17 @@ export default function Finance() {
   const fetchTransactions = async () => {
     try {
       setLoading(true);
-      const res = await smartErpApi.stockTransactions();
-      // Using stock transactions as fallback - finance transactions would be similar
-      setTransactions(res.data || []);
+      const res = await smartErpApi.reportsTransactions();
+      const data = (res.data || []).map((tx) => ({
+        ...tx,
+        quantity: Number(tx.quantity || tx.Quantity || 0),
+        transactionType: tx.transactionType || tx.TransactionType || "MOVE",
+        lotNumber: tx.lotNumber || tx.lotNumber === "-" ? tx.lotNumber : tx.LotNumber,
+        warehouseName: tx.warehouseName || tx.Warehouse?.name || `WH-${tx.warehouseId}`,
+        itemName: tx.itemName || tx.itemCode || `Item-${tx.itemId}`,
+        transactionDate: tx.transactionDate || tx.TransactionDate
+      }));
+      setTransactions(data);
       setError("");
     } catch (err) {
       setError("Failed to load transactions");
@@ -86,10 +94,15 @@ export default function Finance() {
     }
   };
 
-  const filteredTransactions = transactions.filter((t) =>
-    t.transactionType?.toLowerCase().includes(filter.toLowerCase()) ||
-    t.referenceNumber?.toLowerCase().includes(filter.toLowerCase())
-  );
+  const filteredTransactions = transactions.filter((t) => {
+    const query = filter.toLowerCase();
+    return (
+      t.transactionType?.toLowerCase().includes(query) ||
+      t.itemName?.toLowerCase().includes(query) ||
+      t.warehouseName?.toLowerCase().includes(query) ||
+      (t.lotNumber || "").toLowerCase().includes(query)
+    );
+  });
 
   const selectedInvoice = useMemo(() => {
     if (!selectedInvoiceId) return null;
@@ -112,21 +125,28 @@ export default function Finance() {
 
       {error && <div className="alert alert-danger">{error}</div>}
 
-        <div className="row mb-4">
-          <div className="col-md-3">
-            <div className="card">
-              <div className="card-body">
-                <h6 className="text-muted">Total Transactions</h6>
-                <h3>{transactions.length}</h3>
-              </div>
-            </div>
-          </div>
+      <div className="row mb-4">
         <div className="col-md-3">
           <div className="card">
             <div className="card-body">
-              <h6 className="text-muted">Total Revenue</h6>
+              <h6 className="text-muted">Total Movements</h6>
+              <h3>{transactions.length}</h3>
+              <small className="text-success text-uppercase">{`${transactions.filter((t) => t.transactionType === 'IN').length} INs`}</small>
+              <br />
+              <small className="text-danger text-uppercase">{`${transactions.filter((t) => t.transactionType === 'OUT').length} OUTs`}</small>
+            </div>
+          </div>
+        </div>
+        <div className="col-md-3">
+          <div className="card">
+            <div className="card-body">
+              <h6 className="text-muted">Net Stock Impact</h6>
               <h3 className="text-success">
-                ${transactions.filter(t => t.transactionType === 'Sale').reduce((sum, t) => sum + Math.abs(t.changeInQuantity), 0).toFixed(2)}
+                {transactions.reduce((sum, t) => {
+                  if (t.transactionType === 'IN') return sum + t.quantity;
+                  if (t.transactionType === 'OUT') return sum - t.quantity;
+                  return sum;
+                }, 0)}
               </h3>
             </div>
           </div>
@@ -134,26 +154,17 @@ export default function Finance() {
         <div className="col-md-3">
           <div className="card">
             <div className="card-body">
-              <h6 className="text-muted">Pending Payments</h6>
-              <h3 className="text-warning">{transactions.filter(t => t.status === 'Pending').length}</h3>
+              <h6 className="text-muted">Tracked Lots</h6>
+              <h3>{new Set(transactions.map((t) => t.lotNumber || "-")).size}</h3>
+              <small className="text-muted">Distinct lot tags</small>
             </div>
           </div>
         </div>
         <div className="col-md-3">
           <div className="card">
             <div className="card-body">
-              <h6 className="text-muted">Completed Today</h6>
-              <h3 className="text-info">
-                {transactions.filter(t => new Date(t.createdAt).toDateString() === new Date().toDateString()).length}
-              </h3>
-            </div>
-          </div>
-        </div>
-        <div className="col-md-3">
-          <div className="card">
-            <div className="card-body">
-              <h6 className="text-muted">Vendor Transactions</h6>
-              <h3 className="text-primary">{vendorReturns.length}</h3>
+              <h6 className="text-muted">Active Warehouses</h6>
+              <h3>{new Set(transactions.map((t) => t.warehouseName)).size}</h3>
             </div>
           </div>
         </div>
@@ -170,7 +181,7 @@ export default function Finance() {
             onChange={(e) => setFilter(e.target.value)}
           />
         </div>
-          <div className="card-body p-0">
+        <div className="card-body p-0">
           {loading ? (
             <div className="text-center py-5">
               <div className="spinner-border text-primary" role="status">
@@ -182,12 +193,12 @@ export default function Finance() {
               <table className="table table-hover mb-0">
                 <thead className="table-light">
                   <tr>
-                    <th>ID</th>
+                    <th>Timestamp</th>
                     <th>Type</th>
-                    <th>Reference</th>
-                    <th>Amount</th>
-                    <th>Status</th>
-                    <th>Date</th>
+                    <th>Item</th>
+                    <th>Warehouse</th>
+                    <th>Lot</th>
+                    <th>Quantity</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -200,28 +211,24 @@ export default function Finance() {
                   ) : (
                     filteredTransactions.map((t) => (
                       <tr key={t.id}>
-                        <td>#{t.id}</td>
+                        <td>{new Date(t.transactionDate).toLocaleString()}</td>
                         <td>
-                          <span className={`badge ${
-                            t.transactionType === 'Sale' ? 'bg-success' :
-                            t.transactionType === 'Purchase' ? 'bg-primary' :
-                            'bg-secondary'
-                          }`}>
-                            {t.transactionType || 'Transaction'}
+                          <span
+                            className={`badge ${
+                              t.transactionType === "IN"
+                                ? "bg-success"
+                                : t.transactionType === "OUT"
+                                  ? "bg-danger"
+                                  : "bg-secondary"
+                            }`}
+                          >
+                            {t.transactionType || "MOVE"}
                           </span>
                         </td>
-                        <td>{t.referenceNumber || 'N/A'}</td>
-                        <td>${Math.abs(t.changeInQuantity)?.toFixed(2)}</td>
-                        <td>
-                          <span className={`badge ${
-                            t.status === 'Completed' ? 'bg-success' :
-                            t.status === 'Pending' ? 'bg-warning' :
-                            'bg-secondary'
-                          }`}>
-                            {t.status || 'Pending'}
-                          </span>
-                        </td>
-                        <td>{new Date(t.createdAt).toLocaleString()}</td>
+                        <td>{t.itemName}</td>
+                        <td>{t.warehouseName}</td>
+                        <td>{t.lotNumber || "—"}</td>
+                        <td>{t.quantity}</td>
                       </tr>
                     ))
                   )}
@@ -229,8 +236,8 @@ export default function Finance() {
               </table>
             </div>
           )}
+        </div>
       </div>
-    </div>
 
     <div className="card border-0 shadow-sm rounded-4 mt-4">
       <div className="card-body">
