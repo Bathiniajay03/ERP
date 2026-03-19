@@ -1,10 +1,25 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../services/apiClient';
-import WarehouseScanner from '../components/WarehouseScanner';
 import MobileScanner from '../components/MobileScanner';
 import './Operations.css';
 
 const MODE_TABS = ['stock', 'sales', 'scanner'];
+
+const formatStatusMessage = (value) => {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(formatStatusMessage).join('; ');
+  if (typeof value === 'object') {
+    if (value.message) return value.message;
+    if (value.title) return value.title;
+    if (value.errors) {
+      if (Array.isArray(value.errors)) return value.errors.map(formatStatusMessage).join('; ');
+      return typeof value.errors === 'string' ? value.errors : JSON.stringify(value.errors);
+    }
+    return JSON.stringify(value);
+  }
+  return String(value);
+};
 
 export default function Operations() {
   const [items, setItems] = useState([]);
@@ -35,6 +50,14 @@ export default function Operations() {
     generatedSerials: []
   });
 
+  const showStatus = useCallback((type, text) => {
+    const normalized = formatStatusMessage(text);
+    setStatus({ type, text: normalized });
+    if (normalized) {
+      setTimeout(() => setStatus({ type: '', text: '' }), 4000);
+    }
+  }, []);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
@@ -51,7 +74,7 @@ export default function Operations() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [showStatus]);
 
   const handleScannerPopulate = useCallback((payload) => {
     if (!payload) return;
@@ -68,30 +91,6 @@ export default function Operations() {
     fetchData();
   }, [fetchData]);
 
-  const formatStatusMessage = (value) => {
-    if (!value) return '';
-    if (typeof value === 'string') return value;
-    if (Array.isArray(value)) return value.map(formatStatusMessage).join('; ');
-    if (typeof value === 'object') {
-      if (value.message) return value.message;
-      if (value.title) return value.title;
-      if (value.errors) {
-        if (Array.isArray(value.errors)) return value.errors.map(formatStatusMessage).join('; ');
-        return typeof value.errors === 'string' ? value.errors : JSON.stringify(value.errors);
-      }
-      return JSON.stringify(value);
-    }
-    return String(value);
-  };
-
-  const showStatus = (type, text) => {
-    const normalized = formatStatusMessage(text);
-    setStatus({ type, text: normalized });
-    if (normalized) {
-      setTimeout(() => setStatus({ type: '', text: '' }), 4000);
-    }
-  };
-
   const parseId = (value) => {
     const parsed = parseInt(value, 10);
     return Number.isNaN(parsed) ? null : parsed;
@@ -99,12 +98,12 @@ export default function Operations() {
 
   const selectedItemId = parseId(txForm.itemId);
   const selectedWarehouseId = parseId(txForm.warehouseId);
-  const matchingLots =
-    selectedItemId && selectedWarehouseId
-      ? inventory.filter(
-          (entry) => entry.itemId === selectedItemId && entry.warehouseId === selectedWarehouseId
-        )
-      : [];
+  const matchingLots = useMemo(() => {
+    if (!selectedItemId || !selectedWarehouseId) return [];
+    return inventory.filter(
+      (entry) => entry.itemId === selectedItemId && entry.warehouseId === selectedWarehouseId
+    );
+  }, [inventory, selectedItemId, selectedWarehouseId]);
 
   const getAvailableLots = () => {
     if (!selectedItemId || !selectedWarehouseId) return [];
@@ -225,9 +224,9 @@ export default function Operations() {
 
   const currentModeInfo = modeOptions[txMode] || modeOptions.in;
   const modeButtonAccent = {
-    in: { backgroundColor: '#10b981', borderColor: '#059669', color: '#fff' },
-    out: { backgroundColor: '#ef4444', borderColor: '#dc2626', color: '#fff' },
-    transfer: { backgroundColor: '#f59e0b', borderColor: '#d97706', color: '#111827' }
+    in: { backgroundColor: '#10b981', border: '2px solid #059669', color: '#fff' },
+    out: { backgroundColor: '#ef4444', border: '2px solid #dc2626', color: '#fff' },
+    transfer: { backgroundColor: '#f59e0b', border: '2px solid #d97706', color: '#111827' }
   };
 
   return (

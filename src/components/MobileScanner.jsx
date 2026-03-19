@@ -2,10 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
 import api from '../services/apiClient';
 
-const SCAN_COOLDOWN_MS = 1200;
-
-const normalizeCode = (code) => (code || '').trim().toLowerCase();
-const normalizeForMatching = (code) => (code || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const SCAN_COOLDOWN_MS = 2000;
 
 export default function MobileScanner({
   items = [],
@@ -40,6 +37,22 @@ export default function MobileScanner({
     setTimeout(() => setStatus({ type: '', text: '' }), 4000);
   }, []);
 
+  const findBackCamera = useCallback(async () => {
+    if (!navigator?.mediaDevices?.enumerateDevices) return undefined;
+
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter((device) => device.kind === 'videoinput');
+      const backCamera = videoDevices.find((device) =>
+        /(back|rear|environment)/i.test(device.label || '')
+      );
+      return backCamera?.deviceId ?? videoDevices[0]?.deviceId;
+    } catch (error) {
+      console.error('Camera enumeration failed', error);
+      return undefined;
+    }
+  }, []);
+
   const matchingLots = useMemo(() => {
     const itemId = parseInt(txForm.itemId, 10);
     const warehouseId = parseInt(txForm.warehouseId, 10);
@@ -64,28 +77,29 @@ export default function MobileScanner({
       setDetectedBarcode(trimmed);
       try {
         const response = await api.get(`/items/barcode/${encodeURIComponent(trimmed)}`);
-        const item = response.data;
+        const payload = response.data;
+        const assignedWarehouseId = payload.inventory?.warehouseId ?? warehouses[0]?.id ?? '';
         setCurrentItem({
-          itemId: item.itemId,
-          itemCode: item.itemCode,
-          description: item.itemName
+          itemId: payload.itemId,
+          itemCode: payload.itemCode,
+          description: payload.itemName
         });
-        const defaultWarehouseId = warehouses[0]?.id ?? '';
         setTxForm((prev) => ({
           ...prev,
-          itemId: String(item.itemId),
-          warehouseId: prev.warehouseId || (defaultWarehouseId ? String(defaultWarehouseId) : '')
+          itemId: String(payload.itemId),
+          warehouseId: prev.warehouseId || (assignedWarehouseId ? String(assignedWarehouseId) : '')
         }));
         onScanDetected({
-          itemId: item.itemId,
-          warehouseId: defaultWarehouseId,
-          lotId: null,
-          lotNumber: ''
+          itemId: payload.itemId,
+          warehouseId: assignedWarehouseId,
+          lotId: payload.inventory?.lotId ?? null,
+          lotNumber: payload.inventory?.lotNumber ?? ''
         });
-        showStatus('success', `Scanned: ${item.itemCode}`);
+        const statusMessage = payload.isNew ? 'New item auto-created' : `Scanned: ${payload.itemCode}`;
+        showStatus('success', statusMessage);
         stopCamera();
         fetchData();
-        return item;
+        return payload;
       } catch (err) {
         console.error('Barcode lookup failed', err);
         const status = err?.response?.status;
@@ -126,7 +140,7 @@ export default function MobileScanner({
     setManualInput('');
   };
 
-  const startCamera = useCallback(() => {
+  const startCamera = useCallback(async () => {
     if (!videoRef.current) return;
     setCameraError('');
     try {
@@ -136,9 +150,11 @@ export default function MobileScanner({
         codeReaderRef.current = new BrowserMultiFormatReader();
       }
 
+      const deviceId = await findBackCamera();
+
       codeReaderRef.current
         .decodeFromVideoDevice(
-          undefined,
+          deviceId ?? undefined,
           videoRef.current,
           (result, error) => {
             if (result) {
@@ -164,10 +180,10 @@ export default function MobileScanner({
       setCameraActive(false);
       showStatus('warning', 'Camera denied – use manual entry');
     }
-  }, [handleDetectedCode, showStatus]);
+  }, [handleDetectedCode, showStatus, findBackCamera]);
 
   useEffect(() => {
-    startCamera();
+    void startCamera();
     return stopCamera;
   }, [startCamera, stopCamera]);
 
@@ -187,8 +203,7 @@ export default function MobileScanner({
       showStatus('success', 'Stock IN recorded');
       setTxForm((prev) => ({ ...prev, quantity: '', lotNumber: '', lotId: '' }));
       fetchData();
-      startCamera();
-      startCamera();
+      void startCamera();
     } catch (err) {
       console.error('Stock IN failed', err);
       showStatus('error', err.response?.data || 'Stock IN failed');
@@ -212,6 +227,7 @@ export default function MobileScanner({
       showStatus('success', 'Stock OUT recorded');
       setTxForm((prev) => ({ ...prev, quantity: '', lotId: '' }));
       fetchData();
+      void startCamera();
     } catch (err) {
       console.error('Stock OUT failed', err);
       showStatus('error', err.response?.data || 'Stock OUT failed');
@@ -219,8 +235,6 @@ export default function MobileScanner({
       setLoading(false);
     }
   };
-
-  const currentWarehouseId = parseInt(txForm.warehouseId, 10);
 
   return (
     <div style={styles.container}>
