@@ -111,6 +111,7 @@ export default function Inventory() {
                     <th>Item Code</th>
                     <th>Item Name</th>
                     <th>Warehouse</th>
+                    <th>Lot / Batch</th>
                     <th>Quantity</th>
                     <th>Unit Cost</th>
                     <th>Total Value</th>
@@ -130,8 +131,9 @@ export default function Inventory() {
                     filteredInventory.map((item) => (
                       <tr key={item.id}>
                         <td><strong>{item.itemCode}</strong></td>
-                        <td>{item.itemName}</td>
-                        <td>{item.warehouseName || `WH-${item.warehouseId}`}</td>
+                          <td>{item.itemName}</td>
+                          <td>{item.warehouseName || `WH-${item.warehouseId}`}</td>
+                          <td>{item.lotNumber || "General"}</td>
                         <td>
                           <span className={`badge ${item.quantity < item.minStock ? 'bg-danger' : 'bg-success'}`}>
                             {item.quantity}

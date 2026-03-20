@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import api from '../services/apiClient';
 import MobileScanner from '../components/MobileScanner';
 import './Operations.css';
@@ -56,6 +56,8 @@ export default function Operations() {
     prefix: '',
     generatedSerials: []
   });
+  const [lotOptions, setLotOptions] = useState([]);
+  const [lotsLoading, setLotsLoading] = useState(false);
 
   const showStatus = useCallback((type, text) => {
     const normalized = formatStatusMessage(text);
@@ -105,17 +107,36 @@ export default function Operations() {
 
   const selectedItemId = parseId(txForm.itemId);
   const selectedWarehouseId = parseId(txForm.warehouseId);
-  const matchingLots = useMemo(() => {
-    if (!selectedItemId || !selectedWarehouseId) return [];
-    return inventory.filter(
-      (entry) => entry.itemId === selectedItemId && entry.warehouseId === selectedWarehouseId
-    );
-  }, [inventory, selectedItemId, selectedWarehouseId]);
 
-  const getAvailableLots = () => {
-    if (!selectedItemId || !selectedWarehouseId) return [];
-    return matchingLots.filter((lot) => lot.lotId !== null && (Number(lot.quantity) || 0) > 0);
-  };
+  const loadLotOptions = useCallback(async () => {
+    if (!selectedItemId || !selectedWarehouseId) {
+      setLotOptions([]);
+      return;
+    }
+    setLotsLoading(true);
+    try {
+      const res = await api.get('/stock/lots', {
+        params: { itemId: selectedItemId, warehouseId: selectedWarehouseId }
+      });
+      const normalized = (res.data || []).map((lot) => ({
+        lotId: lot.lotId ?? lot.LotId ?? null,
+        lotNumber: lot.lotNumber ?? lot.LotNumber ?? 'General',
+        quantity: Number(lot.quantity ?? lot.Quantity ?? 0)
+      }));
+      setLotOptions(normalized);
+    } catch (err) {
+      setLotOptions([]);
+    } finally {
+      setLotsLoading(false);
+    }
+  }, [selectedItemId, selectedWarehouseId]);
+
+  useEffect(() => {
+    loadLotOptions();
+    setTxForm((prev) => ({ ...prev, lotId: '' }));
+  }, [loadLotOptions]);
+
+  const getAvailableLots = () => lotOptions.filter((lot) => lot.lotId !== null && lot.quantity > 0);
 
   const openSerialGenerationModal = () => {
     const item = items.find((i) => i.id === parseInt(txForm.itemId, 10));
@@ -406,7 +427,7 @@ export default function Operations() {
                   >
                     <option value="">-- Choose Lot --</option>
                     {getAvailableLots().map((lot) => (
-                      <option key={lot.id} value={lot.lotId}>
+                      <option key={`${lot.lotId}-${lot.lotNumber}`} value={lot.lotId}>
                         {lot.lotNumber || 'Unassigned'} (Qty: {lot.quantity})
                       </option>
                     ))}
@@ -451,13 +472,15 @@ export default function Operations() {
             {selectedItemId && selectedWarehouseId && (
               <div className="lot-summary">
                 <h4 style={{ margin: 0, marginBottom: '12px' }}>Lot overview</h4>
-                {matchingLots.length === 0 ? (
+                {lotsLoading ? (
+                  <p className="lot-card-line text-muted">Loading lots for this warehouse…</p>
+                ) : lotOptions.length === 0 ? (
                   <p className="lot-card-line">
                     No lots registered for this product/warehouse combination yet.
                   </p>
                 ) : (
                   <div className="lot-grid">
-                    {matchingLots.map((lot) => {
+                    {lotOptions.map((lot) => {
                       const quantity = Number(lot.quantity) || 0;
                       const statusColor = quantity > 0 ? '#064e3b' : '#b91c1c';
                       return (
