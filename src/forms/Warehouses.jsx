@@ -5,15 +5,21 @@ export default function Warehouses() {
   const [warehouses, setWarehouses] = useState([]);
   const [form, setForm] = useState({ code: '', name: '' });
   const [filter, setFilter] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState({ text: "", type: "" });
 
   useEffect(() => { fetchWarehouses(); }, []);
 
   const fetchWarehouses = async () => {
+    setLoading(true);
     try {
       const res = await api.get('/warehouses');
       setWarehouses(res.data);
     } catch (e) {
       console.error(e);
+      setMessage({ text: "Failed to load warehouses.", type: "danger" });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -21,12 +27,13 @@ export default function Warehouses() {
 
   const handleAdd = async (e) => {
     e.preventDefault();
+    setMessage({ text: "", type: "" });
 
     const code = sanitize(form.code).toUpperCase().replace(/\s+/g, '-');
     const name = sanitize(form.name);
 
     if (!/[A-Z]/.test(code)) {
-      alert('Warehouse code must include a letter.');
+      setMessage({ text: "Warehouse code must include at least one letter.", type: "warning" });
       return;
     }
 
@@ -36,118 +43,263 @@ export default function Warehouses() {
     );
 
     if (exists) {
-      alert('A warehouse with that code or name already exists.');
+      setMessage({ text: "A warehouse with that code or name already exists.", type: "warning" });
       return;
     }
 
+    setLoading(true);
     try {
       await api.post(`/warehouses?code=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}`);
+      setMessage({ text: `✓ Warehouse ${code} created successfully.`, type: "success" });
       setForm({ code: '', name: '' });
       fetchWarehouses();
     } catch (e) {
       console.error(e);
-      alert('Failed to create warehouse');
+      setMessage({ text: "Failed to create warehouse.", type: "danger" });
+    } finally {
+      setLoading(false);
     }
   };
 
   const filtered = warehouses.filter((w) => w.name.toLowerCase().includes(filter.toLowerCase()));
 
   return (
-    <div style={styles.page}>
-      <div style={styles.header}>
-        <div>
-          <h2 style={{ margin: 0 }}>Warehouse Management</h2>
-          <p style={styles.subText}>Create and manage storage locations</p>
-        </div>
-      </div>
-
-      <div style={styles.card}>
-        <h4 style={styles.sectionTitle}>Add New Warehouse</h4>
-
-        <form onSubmit={handleAdd} style={styles.formGrid}>
+    <div className="erp-app-wrapper min-vh-100 pb-5 pt-3">
+      <div className="container-fluid px-4" style={{ maxWidth: '1200px' }}>
+        
+        {/* HEADER */}
+        <div className="d-flex justify-content-between align-items-end border-bottom mb-4 pb-3">
           <div>
-            <label style={styles.label}>Warehouse Code</label>
-            <input
-              style={styles.input}
-              placeholder="e.g. KNR-MAIN"
-              value={form.code}
-              onChange={(e) => setForm({ ...form, code: e.target.value })}
-              required
-            />
+            <h4 className="fw-bold m-0 text-dark" style={{ letterSpacing: '-0.5px' }}>Warehouse Locations</h4>
+            <span className="erp-text-muted small text-uppercase">Facility Master Data</span>
           </div>
-
-          <div>
-            <label style={styles.label}>Warehouse Name</label>
-            <input
-              style={styles.input}
-              placeholder="e.g. Karimnagar Main"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              required
-            />
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-            <button style={styles.primaryBtn}>Add Warehouse</button>
-          </div>
-        </form>
-      </div>
-
-      <div style={styles.card}>
-        <div style={styles.tableHeader}>
-          <h4 style={styles.sectionTitle}>Warehouse List</h4>
-          <input
-            style={styles.filterInput}
-            placeholder="Search warehouses..."
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
+          <button 
+            className="btn btn-light border erp-btn d-flex align-items-center gap-2 text-muted fw-bold" 
+            onClick={fetchWarehouses} 
+            disabled={loading}
+          >
+            {loading ? <span className="spinner-border spinner-border-sm" /> : '↻'}
+            Refresh Data
+          </button>
         </div>
 
-        <div style={{ overflowX: 'auto' }}>
-          <table style={styles.table}>
-            <thead style={styles.thead}>
-              <tr>
-                <th>Code</th>
-                <th>Name</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length > 0 ? (
-                filtered.map((w) => (
-                  <tr key={w.id} style={styles.row}>
-                    <td style={styles.codeCell}>{w.code}</td>
-                    <td>{w.name}</td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan="2" style={styles.noData}>No warehouses found.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+        {/* ALERT */}
+        {message.text && (
+          <div className={`alert erp-alert d-flex justify-content-between align-items-center py-2 mb-4`} style={{
+            backgroundColor: message.type === 'success' ? '#f0fdf4' : message.type === 'warning' ? '#fffbeb' : '#fef2f2',
+            color: message.type === 'success' ? '#166534' : message.type === 'warning' ? '#92400e' : '#991b1b',
+            border: `1px solid ${message.type === 'success' ? '#bbf7d0' : message.type === 'warning' ? '#fde68a' : '#fecaca'}`
+          }}>
+            <span className="fw-semibold">{message.text}</span>
+            <button className="btn-close btn-sm" onClick={() => setMessage({ text: "", type: "" })}></button>
+          </div>
+        )}
+
+        <div className="row g-4">
+          
+          {/* LEFT: CREATE WAREHOUSE */}
+          <div className="col-md-5 col-lg-4">
+            <div className="erp-panel shadow-sm h-100">
+              <div className="erp-panel-header bg-light">
+                <span className="fw-bold">Register Facility</span>
+              </div>
+              <div className="p-4 bg-white">
+                <form onSubmit={handleAdd}>
+                  <div className="mb-3">
+                    <label className="erp-label">Facility Code <span className="text-danger">*</span></label>
+                    <input
+                      className="form-control erp-input font-monospace"
+                      placeholder="e.g. KNR-MAIN"
+                      value={form.code}
+                      onChange={(e) => setForm({ ...form, code: e.target.value })}
+                      required
+                      disabled={loading}
+                    />
+                    <small className="text-muted mt-1 d-block" style={{ fontSize: '0.7rem' }}>Must contain at least one letter.</small>
+                  </div>
+
+                  <div className="mb-4">
+                    <label className="erp-label">Facility Name <span className="text-danger">*</span></label>
+                    <input
+                      className="form-control erp-input"
+                      placeholder="e.g. Karimnagar Main"
+                      value={form.name}
+                      onChange={(e) => setForm({ ...form, name: e.target.value })}
+                      required
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div className="pt-3 border-top">
+                    <button type="submit" className="btn btn-primary erp-btn w-100 fw-bold" disabled={loading || !form.code || !form.name}>
+                      {loading ? "Processing..." : "+ Add Warehouse"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+
+          {/* RIGHT: WAREHOUSE LIST */}
+          <div className="col-md-7 col-lg-8">
+            <div className="erp-panel d-flex flex-column shadow-sm" style={{ height: "calc(100vh - 180px)", minHeight: '400px' }}>
+              <div className="erp-panel-header d-flex justify-content-between align-items-center bg-light">
+                <span className="fw-bold">Active Locations</span>
+                <div className="d-flex align-items-center gap-2">
+                  <span className="text-muted small">Filter:</span>
+                  <input
+                    className="form-control form-control-sm erp-input"
+                    style={{ width: '200px' }}
+                    placeholder="Search by name..."
+                    value={filter}
+                    onChange={(e) => setFilter(e.target.value)}
+                  />
+                </div>
+              </div>
+              
+              <div className="erp-table-container flex-grow-1 overflow-auto bg-white">
+                {loading && warehouses.length === 0 ? (
+                  <div className="d-flex flex-column align-items-center justify-content-center h-100">
+                    <div className="spinner-border text-primary mb-2" style={{ width: '2rem', height: '2rem' }}></div>
+                  </div>
+                ) : (
+                  <table className="table erp-table table-hover mb-0 align-middle">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '120px' }}>Facility Code</th>
+                        <th>Facility Name</th>
+                        <th className="text-center" style={{ width: '100px' }}>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtered.length > 0 ? (
+                        filtered.map((w) => (
+                          <tr key={w.id}>
+                            <td className="fw-bold font-monospace text-dark">{w.code}</td>
+                            <td className="text-dark fw-semibold">{w.name}</td>
+                            <td className="text-center">
+                              <span className="erp-status-tag tag-success">ACTIVE</span>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan="3" className="text-center py-5 text-muted">
+                            No warehouse facilities found matching your criteria.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
+
+      <style>{`
+        /* --- ERP THEME CSS --- */
+        :root {
+          --erp-primary: #0f4c81;
+          --erp-bg: #eef2f5;
+          --erp-surface: #ffffff;
+          --erp-border: #cfd8dc;
+          --erp-text-main: #263238;
+          --erp-text-muted: #607d8b;
+        }
+
+        .erp-app-wrapper {
+          background-color: var(--erp-bg);
+          color: var(--erp-text-main);
+          font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+          font-size: 0.85rem;
+        }
+
+        .erp-text-muted { color: var(--erp-text-muted) !important; }
+
+        /* Panels */
+        .erp-panel {
+          background: var(--erp-surface);
+          border: 1px solid var(--erp-border);
+          border-radius: 4px;
+          overflow: hidden;
+        }
+        .erp-panel-header {
+          border-bottom: 1px solid var(--erp-border);
+          padding: 12px 16px;
+          font-size: 0.85rem;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          color: #34495e;
+        }
+
+        /* Inputs & Buttons */
+        .erp-input {
+          border-radius: 3px;
+          border-color: #b0bec5;
+          font-size: 0.85rem;
+          padding: 8px 10px;
+        }
+        .erp-input:focus {
+          border-color: var(--erp-primary);
+          box-shadow: 0 0 0 2px rgba(15, 76, 129, 0.2);
+        }
+        .erp-btn {
+          border-radius: 3px;
+          font-weight: 600;
+          letter-spacing: 0.2px;
+          font-size: 0.85rem;
+          padding: 8px 16px;
+        }
+        .erp-label {
+          font-size: 0.75rem;
+          font-weight: 700;
+          color: var(--erp-text-muted);
+          text-transform: uppercase;
+          margin-bottom: 6px;
+          display: block;
+        }
+
+        /* Data Table */
+        .erp-table-container::-webkit-scrollbar { width: 8px; height: 8px; }
+        .erp-table-container::-webkit-scrollbar-thumb { background: #b0bec5; border-radius: 4px; }
+        .erp-table-container::-webkit-scrollbar-track { background: #eceff1; }
+        
+        .erp-table { font-size: 0.85rem; }
+        .erp-table thead th {
+          background-color: #f1f5f9;
+          color: #475569;
+          font-weight: 700;
+          text-transform: uppercase;
+          font-size: 0.75rem;
+          position: sticky;
+          top: 0;
+          z-index: 10;
+          border-bottom: 2px solid #cbd5e1;
+          padding: 10px 16px;
+          white-space: nowrap;
+        }
+        .erp-table tbody td {
+          padding: 12px 16px;
+          vertical-align: middle;
+          border-color: #e2e8f0;
+        }
+
+        /* Status Tags */
+        .erp-status-tag {
+          font-size: 0.65rem;
+          font-weight: 700;
+          padding: 4px 8px;
+          border-radius: 2px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          display: inline-block;
+          white-space: nowrap;
+        }
+        .tag-success { background-color: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+      `}</style>
     </div>
   );
 }
-
-const styles = {
-  page: { padding: '30px', background: '#f4f6f9', minHeight: '100vh' },
-  header: { marginBottom: '25px' },
-  subText: { color: '#6b7280', marginTop: '5px' },
-  card: { background: '#fff', padding: '25px', borderRadius: '12px', marginBottom: '25px', boxShadow: '0 4px 20px rgba(0,0,0,0.05)' },
-  sectionTitle: { marginBottom: '20px', fontWeight: 600 },
-  formGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px' },
-  label: { display: 'block', marginBottom: '6px', fontWeight: 500 },
-  input: { width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc' },
-  primaryBtn: { width: '100%', padding: '12px', borderRadius: '8px', border: 'none', background: '#2563eb', color: '#fff', fontWeight: 600, cursor: 'pointer' },
-  tableHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' },
-  filterInput: { padding: '8px 12px', borderRadius: '6px', border: '1px solid #ccc', width: '250px' },
-  table: { width: '100%', borderCollapse: 'collapse' },
-  thead: { background: '#111827', color: '#fff' },
-  row: { borderBottom: '1px solid #eee' },
-  codeCell: { fontWeight: 600, letterSpacing: '0.5px' },
-  noData: { textAlign: 'center', padding: '30px', color: '#6b7280' }
-};

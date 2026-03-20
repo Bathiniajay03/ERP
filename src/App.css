@@ -207,7 +207,6 @@
     border-radius: 12px;
   }
 }
-
 @media (max-width: 992px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -220,11 +219,14 @@
     left: 0;
     width: min(280px, 80vw);
     padding-top: 32px;
-    min-height: 100vh;
+    height: 100vh;       /* Force it to fit the mobile viewport */
+    overflow-y: auto;    /* Added: Ensures mobile users can swipe to scroll down */
     z-index: 1100;
     transform: translateX(-100%);
     opacity: 0;
     pointer-events: none;
+    /* This ensures smooth scrolling on iOS devices */
+    -webkit-overflow-scrolling: touch; 
   }
 
   .app-shell[data-sidebar-open="true"] .app-sidebar {

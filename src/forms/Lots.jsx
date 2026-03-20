@@ -8,6 +8,9 @@ export default function Lots() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("");
+  
+  // State for the modal
+  const [selectedProduct, setSelectedProduct] = useState(null);
 
   useEffect(() => {
     const loadDetails = async () => {
@@ -32,13 +35,14 @@ export default function Lots() {
     loadDetails();
   }, []);
 
+  // 1. Map raw inventory to rich rows
   const inventoryRows = useMemo(() => {
     const itemsById = new Map(items.map((item) => [item.id, item]));
     const warehousesById = new Map(warehouses.map((warehouse) => [warehouse.id, warehouse]));
 
     return inventory.map((entry) => {
-      const warehouse = warehousesById.get(entry.WarehouseId);
-      const item = itemsById.get(entry.ItemId);
+      const warehouse = warehousesById.get(entry.WarehouseId || entry.warehouseId);
+      const item = itemsById.get(entry.ItemId || entry.itemId);
       const lotNumber =
         (entry.lotNumber || entry.LotNumber || entry.lotId || "").trim() === "-" ||
         !(entry.lotNumber || entry.LotNumber)
@@ -51,9 +55,9 @@ export default function Lots() {
         id: entry.id ?? entry.Id,
         lotId: entry.lotId ?? entry.LotId,
         lotNumber,
-        itemCode: item?.itemCode || `Item-${entry.itemId}`,
+        itemCode: item?.itemCode || `Item-${entry.itemId || entry.ItemId}`,
         itemName: item?.description || "Unknown product",
-        warehouseName: warehouse?.name || `WH-${entry.warehouseId}`,
+        warehouseName: warehouse?.name || `WH-${entry.warehouseId || entry.WarehouseId}`,
         quantity,
         storage: storageHint,
         locationCode: entry.locationCode || entry.LocationCode || item?.WarehouseLocation || "N/A"
@@ -61,140 +65,413 @@ export default function Lots() {
     });
   }, [inventory, items, warehouses]);
 
-  const filteredRows = useMemo(() => {
-    if (!filter) return inventoryRows;
+  // 2. Group those rows by Product (Item Code)
+  const groupedProducts = useMemo(() => {
+    const groups = {};
+    inventoryRows.forEach((row) => {
+      if (!groups[row.itemCode]) {
+        groups[row.itemCode] = {
+          itemCode: row.itemCode,
+          itemName: row.itemName,
+          totalQuantity: 0,
+          lots: []
+        };
+      }
+      groups[row.itemCode].totalQuantity += row.quantity;
+      groups[row.itemCode].lots.push(row);
+    });
+    
+    // Sort products alphabetically
+    return Object.values(groups).sort((a, b) => a.itemCode.localeCompare(b.itemCode));
+  }, [inventoryRows]);
+
+  // 3. Filter the grouped products
+  const filteredGroups = useMemo(() => {
+    if (!filter) return groupedProducts;
     const normalized = filter.toLowerCase();
-    return inventoryRows.filter(
-      (row) =>
-        row.itemCode.toLowerCase().includes(normalized) ||
-        row.itemName.toLowerCase().includes(normalized) ||
-        row.lotNumber.toLowerCase().includes(normalized) ||
-        row.warehouseName.toLowerCase().includes(normalized)
+    
+    return groupedProducts.filter((group) =>
+      group.itemCode.toLowerCase().includes(normalized) ||
+      group.itemName.toLowerCase().includes(normalized) ||
+      // Also search within the lots of this product
+      group.lots.some(lot => 
+        lot.lotNumber.toLowerCase().includes(normalized) || 
+        lot.warehouseName.toLowerCase().includes(normalized)
+      )
     );
-  }, [filter, inventoryRows]);
+  }, [filter, groupedProducts]);
 
   const summary = useMemo(() => {
     const uniqueLots = new Set(
       inventoryRows.map((row) => (row.lotId != null ? `lot-${row.lotId}` : `general-${row.itemCode}-${row.warehouseName}`))
     );
-    const uniqueItems = new Set(inventoryRows.map((row) => row.itemCode));
     const totalQuantity = inventoryRows.reduce((sum, row) => sum + row.quantity, 0);
     return {
       lots: uniqueLots.size,
-      items: uniqueItems.size,
+      items: groupedProducts.length,
       quantity: totalQuantity
     };
-  }, [inventoryRows]);
+  }, [inventoryRows, groupedProducts]);
 
   return (
-    <div className="dashboard-page">
-      <div className="page-header">
-        <div>
-          <h1>Lot Tracking</h1>
-          <p className="text-muted mb-0">See every lot, where it lives, and how much stock remains.</p>
+    <div className="erp-app-wrapper min-vh-100 pb-5 pt-3">
+      <div className="container-fluid px-4" style={{ maxWidth: '1400px' }}>
+        
+        {/* HEADER */}
+        <div className="d-flex justify-content-between align-items-end border-bottom mb-4 pb-3">
+          <div>
+            <h4 className="fw-bold m-0 text-dark" style={{ letterSpacing: '-0.5px' }}>Lot & Batch Tracking</h4>
+            <span className="erp-text-muted small text-uppercase">Granular Inventory Genealogy</span>
+          </div>
+          <div className="d-flex gap-2 align-items-center">
+             <span className="text-muted small fw-bold">Filter:</span>
+             <input
+              className="form-control form-control-sm erp-input"
+              style={{ width: '250px' }}
+              placeholder="Search product, lot, or bin..."
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              disabled={loading}
+            />
+          </div>
         </div>
-        <button className="btn btn-outline-secondary" onClick={() => setFilter("")}>
-          Reset filter
-        </button>
-      </div>
 
-      {error && <div className="alert alert-danger">{error}</div>}
+        {error && (
+          <div className={`alert erp-alert py-2 mb-4`} style={{ backgroundColor: '#fee2e2', color: '#991b1b', border: '1px solid #f87171' }}>
+            <span className="fw-semibold">{error}</span>
+          </div>
+        )}
 
-      <div className="row gy-3 mb-4">
-        <div className="col-sm-6 col-lg-4">
-          <div className="card h-100">
-            <div className="card-body">
-              <h6 className="text-muted">Tracked Lots</h6>
-              <h2 className="fw-bold">{summary.lots}</h2>
-              <p className="mb-0 text-muted">Distinct lot numbers currently in stock.</p>
+        {/* KPI DASHBOARD */}
+        <div className="row g-3 mb-4">
+          <div className="col-md-4">
+            <div className="erp-kpi-box" style={{ borderLeftColor: '#0f4c81' }}>
+              <span className="erp-kpi-label">Products Covered</span>
+              <span className="erp-kpi-value text-dark">{summary.items}</span>
+              <span className="text-muted" style={{ fontSize: '0.65rem' }}>Items with lot genealogy entries</span>
+            </div>
+          </div>
+          <div className="col-md-4">
+            <div className="erp-kpi-box" style={{ borderLeftColor: '#6366f1' }}>
+              <span className="erp-kpi-label">Active Lots & Batches</span>
+              <span className="erp-kpi-value text-dark">{summary.lots}</span>
+              <span className="text-muted" style={{ fontSize: '0.65rem' }}>Distinct tracking numbers in system</span>
+            </div>
+          </div>
+          <div className="col-md-4">
+            <div className="erp-kpi-box" style={{ borderLeftColor: '#059669' }}>
+              <span className="erp-kpi-label">Total Units Tracked</span>
+              <span className="erp-kpi-value text-success font-monospace">{summary.quantity.toFixed(0)}</span>
+              <span className="text-muted" style={{ fontSize: '0.65rem' }}>Global sum of all tracked units</span>
             </div>
           </div>
         </div>
-        <div className="col-sm-6 col-lg-4">
-          <div className="card h-100">
-            <div className="card-body">
-              <h6 className="text-muted">Products Covered</h6>
-              <h2 className="fw-bold">{summary.items}</h2>
-              <p className="mb-0 text-muted">Items that currently have lot entries.</p>
-            </div>
-          </div>
-        </div>
-        <div className="col-sm-12 col-lg-4">
-          <div className="card h-100">
-            <div className="card-body">
-              <h6 className="text-muted">Available Quantity</h6>
-              <h2 className="fw-bold">{summary.quantity.toFixed(0)}</h2>
-              <p className="mb-0 text-muted">Units ready across all tracked lots.</p>
-            </div>
-          </div>
-        </div>
-      </div>
 
-      <div className="card mb-4">
-        <div className="card-header d-flex flex-wrap justify-content-between align-items-center gap-3">
-          <h5 className="mb-0">Lot Details</h5>
-          <input
-            className="form-control form-control-sm w-auto"
-            placeholder="Filter by item, lot or warehouse..."
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
-            disabled={loading}
-          />
-        </div>
-        <div className="card-body p-0">
-          {loading ? (
-            <div className="text-center py-5">
-              <div className="spinner-border text-primary" role="status">
-                <span className="visually-hidden">Loading lots...</span>
+        {/* MASTER DATA GRID */}
+        <div className="erp-panel d-flex flex-column shadow-sm" style={{ height: "calc(100vh - 240px)", minHeight: '400px' }}>
+          <div className="erp-panel-header d-flex justify-content-between align-items-center bg-light">
+            <span className="fw-bold">Product Lot Aggregation</span>
+            <span className="badge bg-secondary">{filteredGroups.length} Products</span>
+          </div>
+          
+          <div className="erp-table-container flex-grow-1 overflow-auto bg-white">
+            {loading ? (
+              <div className="d-flex flex-column align-items-center justify-content-center h-100">
+                <div className="spinner-border text-primary mb-2" style={{ width: '2rem', height: '2rem' }}></div>
+                <span className="small text-muted text-uppercase fw-bold">Synchronizing Genealogy...</span>
               </div>
-            </div>
-          ) : (
-            <div className="table-responsive">
-              <table className="table table-hover mb-0">
-                <thead className="table-light">
+            ) : (
+              <table className="table erp-table table-hover mb-0 align-middle">
+                <thead>
                   <tr>
-                    <th>Item</th>
-                    <th>Lot #</th>
-                    <th>Warehouse</th>
-                    <th>Quantity</th>
-                    <th>Storage</th>
-                    <th>Location Tag</th>
+                    <th style={{ width: '20%' }}>Product Code</th>
+                    <th style={{ width: '35%' }}>Description</th>
+                    <th className="text-center">Active Lots</th>
+                    <th className="text-end">Total Available Qty</th>
+                    <th className="text-center" style={{ width: '120px' }}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRows.length === 0 ? (
+                  {filteredGroups.length === 0 ? (
                     <tr>
-                      <td colSpan="6" className="text-center text-muted py-4">
-                        No lot data matched your filter.
+                      <td colSpan="5" className="text-center text-muted py-5">
+                        No product lot data matched your filter.
                       </td>
                     </tr>
                   ) : (
-                    filteredRows.map((row) => (
-                      <tr key={`${row.id}-${row.lotNumber ?? "general"}`}>
-                        <td>
-                          <strong>{row.itemCode}</strong>
-                          <div className="text-muted" style={{ fontSize: "0.85rem" }}>
-                            {row.itemName}
-                          </div>
-                        </td>
-                        <td>{row.lotNumber}</td>
-                        <td>{row.warehouseName}</td>
-                        <td>
-                          <span className={`badge ${row.quantity === 0 ? "bg-danger" : "bg-success"}`}>
-                            {row.quantity.toFixed(0)}
+                    filteredGroups.map((group) => (
+                      <tr 
+                        key={group.itemCode} 
+                        onClick={() => setSelectedProduct(group)}
+                        style={{ cursor: 'pointer' }}
+                        title="Click to view detailed lots"
+                        className={selectedProduct?.itemCode === group.itemCode ? "table-primary" : ""}
+                      >
+                        <td><span className="fw-bold font-monospace text-dark">{group.itemCode}</span></td>
+                        <td><span className="text-truncate d-block text-muted">{group.itemName}</span></td>
+                        <td className="text-center">
+                          <span className="badge bg-secondary rounded-pill px-2 py-1">
+                            {group.lots.length} {group.lots.length === 1 ? 'Lot' : 'Lots'}
                           </span>
                         </td>
-                        <td>{row.storage}</td>
-                        <td>{row.locationCode || "n/a"}</td>
+                        <td className="text-end">
+                          <span className={`fw-bold font-monospace ${group.totalQuantity > 0 ? 'text-success' : 'text-danger'}`}>
+                            {group.totalQuantity.toFixed(2)}
+                          </span>
+                        </td>
+                        <td className="text-center">
+                           <button className="btn btn-sm btn-light border erp-btn text-primary">View Lots</button>
+                        </td>
                       </tr>
                     ))
                   )}
                 </tbody>
               </table>
-            </div>
-          )}
+            )}
+          </div>
         </div>
+
       </div>
+
+      {/* DETAILED LOT MODAL */}
+      {selectedProduct && (
+        <div className="erp-modal-overlay" onClick={() => setSelectedProduct(null)}>
+          <div className="erp-dialog erp-dialog-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header d-flex justify-content-between align-items-center">
+              <div>
+                <h5 className="m-0 fw-bold">{selectedProduct.itemCode}</h5>
+                <small className="opacity-75">{selectedProduct.itemName}</small>
+              </div>
+              <button className="btn-close btn-close-white" onClick={() => setSelectedProduct(null)}></button>
+            </div>
+            
+            <div className="erp-dialog-body bg-light p-0">
+              <div className="p-4 border-bottom bg-white">
+                 <div className="row">
+                   <div className="col-md-6">
+                     <span className="erp-meta-label">Total Product Quantity</span>
+                     <div className={`fs-4 fw-bold font-monospace ${selectedProduct.totalQuantity > 0 ? 'text-success' : 'text-danger'}`}>
+                       {selectedProduct.totalQuantity.toFixed(2)}
+                     </div>
+                   </div>
+                   <div className="col-md-6 text-md-end">
+                     <span className="erp-meta-label">Total Tracked Batches</span>
+                     <div className="fs-4 fw-bold font-monospace text-dark">
+                       {selectedProduct.lots.length}
+                     </div>
+                   </div>
+                 </div>
+              </div>
+
+              <div className="p-4">
+                <h6 className="erp-section-title mb-3">Individual Lot Breakdown</h6>
+                <div className="border rounded overflow-hidden shadow-sm bg-white">
+                  <table className="table erp-table table-sm table-hover mb-0 align-middle">
+                    <thead className="table-light">
+                      <tr>
+                        <th>Lot / Batch #</th>
+                        <th>Warehouse</th>
+                        <th>Storage / Bin</th>
+                        <th className="text-end">Quantity</th>
+                        <th className="text-center">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedProduct.lots.map((lot) => (
+                        <tr key={`${lot.id}-${lot.lotNumber}`}>
+                          <td className="fw-bold font-monospace text-dark">{lot.lotNumber}</td>
+                          <td className="text-muted">{lot.warehouseName}</td>
+                          <td className="text-muted">
+                            <span className="d-block">{lot.storage}</span>
+                            {lot.locationCode !== 'N/A' && <span className="small text-secondary">Bin: {lot.locationCode}</span>}
+                          </td>
+                          <td className="text-end fw-bold font-monospace">
+                            {lot.quantity.toFixed(2)}
+                          </td>
+                          <td className="text-center">
+                            <span className={`erp-status-tag ${lot.quantity > 0 ? 'tag-success' : 'tag-danger'}`}>
+                              {lot.quantity > 0 ? 'AVAILABLE' : 'DEPLETED'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-3 bg-white border-top text-end">
+              <button className="btn btn-secondary erp-btn px-4" onClick={() => setSelectedProduct(null)}>Close Window</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        /* --- ERP THEME CSS --- */
+        :root {
+          --erp-primary: #0f4c81;
+          --erp-bg: #eef2f5;
+          --erp-surface: #ffffff;
+          --erp-border: #cfd8dc;
+          --erp-text-main: #263238;
+          --erp-text-muted: #607d8b;
+        }
+
+        .erp-app-wrapper {
+          background-color: var(--erp-bg);
+          color: var(--erp-text-main);
+          font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+          font-size: 0.85rem;
+        }
+
+        .erp-text-muted { color: var(--erp-text-muted) !important; }
+
+        /* KPI Boxes */
+        .erp-kpi-box {
+          background: var(--erp-surface); 
+          border: 1px solid var(--erp-border);
+          padding: 16px 20px; 
+          border-left: 4px solid var(--erp-primary);
+          border-radius: 4px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .erp-kpi-label { 
+          font-size: 0.75rem; 
+          text-transform: uppercase; 
+          color: var(--erp-text-muted); 
+          font-weight: 700; 
+          letter-spacing: 0.5px;
+        }
+        .erp-kpi-value { 
+          font-size: 1.75rem; 
+          font-weight: 700; 
+          line-height: 1;
+        }
+
+        /* Panels */
+        .erp-panel {
+          background: var(--erp-surface);
+          border: 1px solid var(--erp-border);
+          border-radius: 4px;
+          overflow: hidden;
+        }
+        .erp-panel-header {
+          border-bottom: 1px solid var(--erp-border);
+          padding: 12px 16px;
+          font-size: 0.9rem;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          color: #34495e;
+        }
+
+        /* Inputs & Buttons */
+        .erp-input {
+          border-radius: 3px;
+          border-color: #b0bec5;
+          font-size: 0.85rem;
+          padding: 6px 10px;
+        }
+        .erp-input:focus {
+          border-color: var(--erp-primary);
+          box-shadow: 0 0 0 2px rgba(15, 76, 129, 0.2);
+        }
+        .erp-btn {
+          border-radius: 3px;
+          font-weight: 600;
+          letter-spacing: 0.2px;
+          font-size: 0.85rem;
+          padding: 6px 14px;
+        }
+
+        /* Data Table */
+        .erp-table-container::-webkit-scrollbar { width: 8px; height: 8px; }
+        .erp-table-container::-webkit-scrollbar-thumb { background: #b0bec5; border-radius: 4px; }
+        .erp-table-container::-webkit-scrollbar-track { background: #eceff1; }
+        
+        .erp-table { font-size: 0.85rem; }
+        .erp-table thead th {
+          background-color: #f1f5f9;
+          color: #475569;
+          font-weight: 700;
+          text-transform: uppercase;
+          font-size: 0.75rem;
+          position: sticky;
+          top: 0;
+          z-index: 10;
+          border-bottom: 2px solid #cbd5e1;
+          padding: 10px 16px;
+          white-space: nowrap;
+        }
+        .erp-table tbody td {
+          padding: 12px 16px;
+          vertical-align: middle;
+          border-color: #e2e8f0;
+        }
+        .table-primary { background-color: #e0f2fe !important; }
+
+        /* Status Tags */
+        .erp-status-tag {
+          font-size: 0.65rem;
+          font-weight: 700;
+          padding: 4px 8px;
+          border-radius: 2px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          display: inline-block;
+          white-space: nowrap;
+        }
+        .tag-success { background-color: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+        .tag-danger { background-color: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+
+        /* Modals / Dialogs */
+        .erp-modal-overlay {
+          position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+          background: rgba(38, 50, 56, 0.6);
+          display: flex; align-items: center; justify-content: center;
+          z-index: 1050;
+        }
+        .erp-dialog {
+          background: var(--erp-surface);
+          border-radius: 4px;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+          width: 100%;
+          max-height: 90vh;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          animation: modalFadeIn 0.2s ease-out;
+        }
+        @keyframes modalFadeIn {
+          from { opacity: 0; transform: translateY(-10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .erp-dialog-lg { max-width: 900px; }
+        .erp-dialog-header {
+          background-color: var(--erp-primary);
+          color: white;
+          padding: 16px 24px;
+          display: flex; justify-content: space-between; align-items: center;
+        }
+        .erp-dialog-body {
+          overflow-y: auto;
+        }
+        .erp-section-title {
+          font-size: 0.75rem;
+          font-weight: 700;
+          color: #90a4ae;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          border-bottom: 1px solid var(--erp-border);
+          padding-bottom: 4px;
+          margin-bottom: 12px;
+        }
+        .erp-meta-label { font-size: 0.7rem; text-transform: uppercase; color: var(--erp-text-muted); font-weight: 700; margin-bottom: 4px; }
+      `}</style>
     </div>
   );
 }

@@ -304,8 +304,6 @@
 //   );
 // }
 
-
-
 import React, { useEffect, useState } from 'react';
 import { smartErpApi } from '../services/smartErpApi';
 
@@ -341,6 +339,7 @@ export default function Automation() {
     }, 5000);
 
     return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadData = async () => {
@@ -560,286 +559,541 @@ export default function Automation() {
     );
   };
 
+  const getHealthTag = (status) => {
+    return ['Connected', 'Healthy', 'Configured', 'Ready'].includes(status) ? 'tag-success' : 'tag-danger';
+  };
+
+  const getRobotStatusTag = (status) => {
+    if (status === 'Idle') return 'tag-info';
+    if (status === 'Charging') return 'tag-warning';
+    if (status === 'Maintenance') return 'tag-danger';
+    return 'tag-success';
+  };
+
   return (
-    <div className="container-fluid py-4 bg-light min-vh-100">
-      {/* Header */}
-      <div className="d-flex justify-content-between align-items-center mb-4">
-        <div>
-          <h3 className="fw-bold text-primary m-0">Automation & IoT Control</h3>
-          <small className="text-secondary">Fleet management, Real-time Device Events, and AI Procurement</small>
+    <div className="erp-app-wrapper min-vh-100 pb-5 pt-3">
+      <div className="container-fluid px-4" style={{ maxWidth: '1400px' }}>
+        
+        {/* HEADER */}
+        <div className="d-flex justify-content-between align-items-end border-bottom mb-4 pb-3">
+          <div>
+            <h4 className="fw-bold m-0 text-dark" style={{ letterSpacing: '-0.5px' }}>Automation & IoT Control</h4>
+            <span className="erp-text-muted small text-uppercase">Fleet management, Event Streams & AI Agents</span>
+          </div>
+          <button className="btn btn-primary erp-btn d-flex align-items-center gap-2" onClick={loadData}>
+            ↻ Refresh Systems
+          </button>
         </div>
-        <button className="btn btn-primary px-4 shadow-sm" onClick={loadData}>Refresh Systems</button>
-      </div>
 
-      {result && <div className="alert alert-info border-0 shadow-sm mb-4">{result}</div>}
-      {warning && <div className="alert alert-warning border-0 shadow-sm mb-4">{warning}</div>}
+        {/* ALERTS */}
+        {result && (
+          <div className="alert erp-alert d-flex justify-content-between align-items-center py-2 mb-3" style={{ backgroundColor: '#e0f2fe', color: '#075985', border: '1px solid #bae6fd' }}>
+            <span className="fw-semibold">{result}</span>
+            <button className="btn-close btn-sm" onClick={() => setResult('')}></button>
+          </div>
+        )}
+        {warning && (
+          <div className="alert erp-alert d-flex justify-content-between align-items-center py-2 mb-4" style={{ backgroundColor: '#fffbeb', color: '#92400e', border: '1px solid #fde68a' }}>
+            <span className="fw-semibold">{warning}</span>
+            <button className="btn-close btn-sm" onClick={() => setWarning('')}></button>
+          </div>
+        )}
 
-      <div className="row g-4 mb-4">
-        {/* Health Panel */}
-        <div className="col-md-4">
-          <div className="card border-0 shadow-sm rounded-4 h-100 p-4">
-            <h6 className="fw-bold mb-3 text-uppercase small text-muted">System Health</h6>
-            <div className="d-flex flex-column gap-2">
-              {['sqlDatabase', 'redis', 'elasticsearch', 'deviceIntegration'].map((key) => (
-                <div key={key} className="d-flex justify-content-between border-bottom pb-1">
-                  <span className="text-capitalize">{key.replace(/([A-Z])/g, ' $1')}</span>
-                  <span className={`badge ${['Connected', 'Healthy', 'Configured', 'Ready'].includes(health?.[key]) ? 'bg-success' : 'bg-danger'}`}>
-                    {health?.[key] || 'Checking...'}
-                  </span>
-                </div>
-              ))}
+        <div className="row g-4 mb-4">
+          {/* Health Panel */}
+          <div className="col-md-4 col-xl-3">
+            <div className="erp-panel h-100">
+              <div className="erp-panel-header bg-light">
+                <span className="fw-bold">System Health</span>
+              </div>
+              <div className="p-3 bg-white d-flex flex-column gap-2 h-100">
+                {['sqlDatabase', 'redis', 'elasticsearch', 'deviceIntegration'].map((key) => (
+                  <div key={key} className="d-flex justify-content-between align-items-center border-bottom pb-2 pt-1">
+                    <span className="text-capitalize text-muted small fw-bold">{key.replace(/([A-Z])/g, ' $1')}</span>
+                    <span className={`erp-status-tag ${getHealthTag(health?.[key])}`}>
+                      {health?.[key] || 'Checking...'}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Robot Fleet Table */}
-        <div className="col-md-8">
-          <div className="card border-0 shadow-sm rounded-4 h-100 p-4">
-            <h6 className="fw-bold mb-3 text-uppercase small text-muted">Robot Fleet Status</h6>
-            <div className="table-responsive">
-              <table className="table table-hover align-middle">
-                <thead className="table-light">
-                  <tr><th>Robot</th><th>Battery</th><th>Location</th><th>Task</th><th>Status</th></tr>
-                </thead>
-                <tbody>
-                  {robots.map((r, idx) => (
-                    <tr key={idx}>
-                      <td className="fw-bold">{r.robot}</td>
-                      <td>
-                        <div className="progress" style={{ height: '8px', width: '60px' }}>
-                          <div className={`progress-bar ${r.batteryLevel < 20 ? 'bg-danger' : 'bg-success'}`} style={{ width: `${r.batteryLevel}%` }}></div>
-                        </div>
-                        <small>{r.batteryLevel}%</small>
-                      </td>
-                      <td>{r.location}</td>
-                      <td className="small text-muted">{r.currentTask}</td>
-                      <td><span className={`badge rounded-pill ${r.status === 'Idle' ? 'bg-info' : 'bg-warning'}`}>{r.status}</span></td>
+          {/* Robot Fleet Table */}
+          <div className="col-md-8 col-xl-9">
+            <div className="erp-panel h-100 d-flex flex-column">
+              <div className="erp-panel-header bg-light">
+                <span className="fw-bold">Robot Fleet Status</span>
+              </div>
+              <div className="erp-table-container flex-grow-1 overflow-auto bg-white">
+                <table className="table erp-table table-hover align-middle mb-0">
+                  <thead className="table-light">
+                    <tr>
+                      <th>Robot Code</th>
+                      <th>Battery Level</th>
+                      <th>Area Location</th>
+                      <th>Current Execution Task</th>
+                      <th className="text-center">Status</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {robots.length === 0 ? (
+                      <tr><td colSpan="5" className="text-center text-muted py-4">No robots registered in fleet.</td></tr>
+                    ) : (
+                      robots.map((r, idx) => (
+                        <tr key={idx}>
+                          <td className="fw-bold font-monospace text-dark">{r.robot}</td>
+                          <td>
+                            <div className="d-flex align-items-center gap-2">
+                              <div className="progress flex-grow-1" style={{ height: '6px', maxWidth: '80px', backgroundColor: '#e2e8f0' }}>
+                                <div className={`progress-bar ${r.batteryLevel < 20 ? 'bg-danger' : 'bg-success'}`} style={{ width: `${r.batteryLevel}%` }}></div>
+                              </div>
+                              <small className="text-muted font-monospace">{r.batteryLevel}%</small>
+                            </div>
+                          </td>
+                          <td className="text-muted">{r.location}</td>
+                          <td className="small text-dark">{r.currentTask}</td>
+                          <td className="text-center">
+                            <span className={`erp-status-tag ${getRobotStatusTag(r.status)}`}>{r.status}</span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <div className="card border-0 shadow-sm rounded-4 p-4 mb-4">
-        <div className="d-flex justify-content-between align-items-center mb-3">
-          <h6 className="fw-bold m-0">Active Robot Task Queue</h6>
-          <small className="text-muted">Auto refresh every 5s</small>
-        </div>
-        <div className="table-responsive">
-          <table className="table table-hover align-middle">
-            <thead className="table-light">
-              <tr>
-                <th>Task ID</th>
-                <th>Order</th>
-                <th>Robot</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {robotTasks.map((t) => (
-                <tr key={t.id}>
-                  <td>{t.id}</td>
-                  <td>{t.orderNumber || `SO-${t.salesOrderId}`}</td>
-                  <td>{t.robotCode || '-'}</td>
-                  <td>{t.taskType}</td>
-                  <td><span className="badge bg-secondary">{t.status}</span></td>
-                  <td>
-                    <div className="d-flex flex-wrap gap-1">
-                      <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => sendRobotTaskEvent(t.id, 'REACHED_SOURCE')}>Reached</button>
-                      <button type="button" className="btn btn-sm btn-outline-warning" onClick={() => sendRobotTaskEvent(t.id, 'PICKED')}>Picked</button>
-                      <button type="button" className="btn btn-sm btn-outline-info" onClick={() => sendRobotTaskEvent(t.id, 'DELIVERED')}>Delivered</button>
-                      <button type="button" className="btn btn-sm btn-success" onClick={() => completeRobotTask(t.id)}>Complete</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {robotTasks.length === 0 && (
+        {/* Task Queue Panel */}
+        <div className="erp-panel shadow-sm mb-4 d-flex flex-column" style={{ maxHeight: '400px' }}>
+          <div className="erp-panel-header d-flex justify-content-between align-items-center bg-light">
+            <span className="fw-bold">Active Robot Task Queue</span>
+            <span className="text-muted small">Auto refresh (5s)</span>
+          </div>
+          <div className="erp-table-container flex-grow-1 overflow-auto bg-white">
+            <table className="table erp-table table-hover align-middle mb-0">
+              <thead className="table-light">
                 <tr>
-                  <td colSpan="6" className="text-muted">No robot tasks found.</td>
+                  <th style={{ width: '80px' }}>Task ID</th>
+                  <th>Associated Order</th>
+                  <th>Assigned Robot</th>
+                  <th>Task Type</th>
+                  <th>Status</th>
+                  <th className="text-end" style={{ width: '320px' }}>Workflow Triggers</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="row g-4">
-        {/* Left Column: Robot Management */}
-        <div className="col-lg-6">
-          <div className="card border-0 shadow-sm rounded-4 p-4 mb-4">
-            <h6 className="fw-bold mb-3">Fleet Actions</h6>
-            <form className="row g-2 mb-4" onSubmit={registerRobot}>
-              <div className="col-md-4"><input className="form-control" placeholder="Robot Code" value={registerRobotForm.robotCode} onChange={(e) => setRegisterRobotForm({ ...registerRobotForm, robotCode: e.target.value })} required /></div>
-              <div className="col-md-4"><input className="form-control" placeholder="Location" value={registerRobotForm.currentLocation} onChange={(e) => setRegisterRobotForm({ ...registerRobotForm, currentLocation: e.target.value })} required /></div>
-              <div className="col-md-2"><input type="number" className="form-control" value={registerRobotForm.batteryLevel} onChange={(e) => setRegisterRobotForm({ ...registerRobotForm, batteryLevel: e.target.value })} required /></div>
-              <div className="col-md-2"><button className="btn btn-dark w-100">Register</button></div>
-            </form>
-            <form className="row g-2" onSubmit={updateRobot}>
-              <div className="col-md-3"><input className="form-control" placeholder="Robot ID" value={updateRobotForm.robotId} onChange={(e) => setUpdateRobotForm({ ...updateRobotForm, robotId: e.target.value })} required /></div>
-              <div className="col-md-3">
-                <select className="form-select" value={updateRobotForm.status} onChange={(e) => setUpdateRobotForm({ ...updateRobotForm, status: e.target.value })}>
-                  <option>Idle</option><option>Busy</option><option>Charging</option><option>Maintenance</option>
-                </select>
-              </div>
-              <div className="col-md-3"><input className="form-control" placeholder="Loc" value={updateRobotForm.currentLocation} onChange={(e) => setUpdateRobotForm({ ...updateRobotForm, currentLocation: e.target.value })} required /></div>
-              <div className="col-md-3"><button className="btn btn-outline-dark w-100">Update</button></div>
-            </form>
-
-            <hr />
-            <h6 className="fw-bold mb-3">Assign Task To Robot</h6>
-            <form className="row g-2" onSubmit={assignTaskToRobot}>
-              <div className="col-md-8">
-                <input
-                  type="number"
-                  className="form-control"
-                  placeholder="Sales Order ID"
-                  value={assignTaskForm.orderId}
-                  onChange={(e) => setAssignTaskForm({ orderId: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="col-md-4">
-                <button className="btn btn-warning w-100">Assign Picking</button>
-              </div>
-            </form>
-          </div>
-
-          <div className="card border-0 shadow-sm rounded-4 p-4">
-            <h6 className="fw-bold mb-3">IoT Device Event Emulator</h6>
-            <form className="row g-3" onSubmit={sendDeviceEvent}>
-              <div className="col-md-4">
-                <select className="form-select" value={deviceForm.deviceType} onChange={(e) => setDeviceForm({ ...deviceForm, deviceType: e.target.value })}>
-                  <option>RFID</option><option>Scanner</option><option>Robot</option><option>IoT</option>
-                </select>
-              </div>
-              <div className="col-md-4"><input className="form-control" placeholder="Device ID" value={deviceForm.deviceId} onChange={(e) => setDeviceForm({ ...deviceForm, deviceId: e.target.value })} required /></div>
-              <div className="col-md-4"><input className="form-control" placeholder="Event (e.g. Move)" value={deviceForm.eventType} onChange={(e) => setDeviceForm({ ...deviceForm, eventType: e.target.value })} required /></div>
-              <div className="col-md-6">
-                <select className="form-select" value={deviceForm.itemId} onChange={(e) => setDeviceForm({ ...deviceForm, itemId: e.target.value })}>
-                  <option value="">Select Item (Optional)</option>
-                  {items.map((i) => <option key={i.id} value={i.id}>{i.itemCode}</option>)}
-                </select>
-              </div>
-              <div className="col-md-6">
-                <select className="form-select" value={deviceForm.warehouseId} onChange={(e) => setDeviceForm({ ...deviceForm, warehouseId: e.target.value })}>
-                  <option value="">Select Warehouse (Optional)</option>
-                  {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-                </select>
-              </div>
-              <div className="col-12"><input className="form-control" placeholder="Payload Data" value={deviceForm.payload} onChange={(e) => setDeviceForm({ ...deviceForm, payload: e.target.value })} required /></div>
-              <div className="col-12"><button className="btn btn-primary w-100 py-2">Trigger Event</button></div>
-            </form>
+              </thead>
+              <tbody>
+                {robotTasks.length === 0 ? (
+                  <tr><td colSpan="6" className="text-center text-muted py-4">Task queue is currently empty.</td></tr>
+                ) : (
+                  robotTasks.map((t) => (
+                    <tr key={t.id}>
+                      <td className="font-monospace text-muted">{t.id}</td>
+                      <td className="fw-bold text-dark font-monospace">{t.orderNumber || `SO-${t.salesOrderId}`}</td>
+                      <td className="font-monospace">{t.robotCode || 'UNASSIGNED'}</td>
+                      <td>{t.taskType}</td>
+                      <td><span className="erp-status-tag tag-secondary">{t.status}</span></td>
+                      <td className="text-end">
+                        <div className="btn-group shadow-sm">
+                          <button type="button" className="btn btn-sm btn-light border erp-btn" onClick={() => sendRobotTaskEvent(t.id, 'REACHED_SOURCE')}>Rch</button>
+                          <button type="button" className="btn btn-sm btn-light border erp-btn" onClick={() => sendRobotTaskEvent(t.id, 'PICKED')}>Pck</button>
+                          <button type="button" className="btn btn-sm btn-light border erp-btn" onClick={() => sendRobotTaskEvent(t.id, 'DELIVERED')}>Del</button>
+                          <button type="button" className="btn btn-sm btn-dark erp-btn" onClick={() => completeRobotTask(t.id)}>Complete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
 
-        {/* Right Column: Procurement & AI */}
-        <div className="col-lg-6">
-          <div className="card border-0 shadow-sm rounded-4 p-4 mb-4 bg-white">
-            <div className="d-flex justify-content-between align-items-center mb-3">
-              <h6 className="fw-bold m-0">Procurement Management</h6>
-              <button className="btn btn-success btn-sm" onClick={runAi}>Run AI Forecasting</button>
-            </div>
-
-            <form className="row g-2 mb-4" onSubmit={createVendor}>
-              <div className="col-md-3"><input className="form-control" placeholder="Vendor Code" value={vendorForm.vendorCode} onChange={(e) => setVendorForm({ ...vendorForm, vendorCode: e.target.value })} required /></div>
-              <div className="col-md-4"><input className="form-control" placeholder="Vendor Name" value={vendorForm.name} onChange={(e) => setVendorForm({ ...vendorForm, name: e.target.value })} required /></div>
-              <div className="col-md-3"><input type="email" className="form-control" placeholder="Vendor Email" value={vendorForm.email} onChange={(e) => setVendorForm({ ...vendorForm, email: e.target.value })} required /></div>
-              <div className="col-md-2"><button className="btn btn-outline-primary w-100">Create Vendor</button></div>
-            </form>
-
-            <form className="row g-2 mb-4" onSubmit={createPurchaseOrder}>
-              <div className="col-md-4">
-                <select className="form-select" value={poForm.vendorId} onChange={(e) => setPoForm({ ...poForm, vendorId: e.target.value })} required>
-                  <option value="">Select Vendor</option>
-                  {vendors.map((vnd) => <option key={vnd.id} value={vnd.id}>{vnd.vendorCode} - {vnd.name}</option>)}
-                </select>
+        {/* Lower Grid: Robot Mgmt / IoT / Procurement */}
+        <div className="row g-4">
+          
+          {/* Left Column: Robot Mgmt & IoT */}
+          <div className="col-lg-6">
+            <div className="erp-panel shadow-sm mb-4">
+              <div className="erp-panel-header bg-light">
+                <span className="fw-bold">Fleet Interventions</span>
               </div>
-              <div className="col-md-8">
-                <input className="form-control" placeholder="Reason" value={poForm.reason} onChange={(e) => setPoForm({ ...poForm, reason: e.target.value })} required />
-              </div>
-
-              {poForm.lines.map((line, idx) => (
-                <React.Fragment key={idx}>
+              <div className="p-4 bg-white">
+                <h6 className="erp-section-title mb-3">Register New Unit</h6>
+                <form className="row g-2 mb-4 align-items-end" onSubmit={registerRobot}>
                   <div className="col-md-4">
-                    <select className="form-select" value={line.itemId} onChange={(e) => updatePoLine(idx, { itemId: e.target.value })} required>
-                      <option value="">Item</option>
-                      {items.map((i) => <option key={i.id} value={i.id}>{i.itemCode}</option>)}
-                    </select>
+                    <label className="erp-label">Robot Code</label>
+                    <input className="form-control erp-input font-monospace" placeholder="e.g. R-101" value={registerRobotForm.robotCode} onChange={(e) => setRegisterRobotForm({ ...registerRobotForm, robotCode: e.target.value })} required />
                   </div>
                   <div className="col-md-4">
-                    <select className="form-select" value={line.warehouseId} onChange={(e) => updatePoLine(idx, { warehouseId: e.target.value })} required>
-                      <option value="">Warehouse</option>
-                      {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                    <label className="erp-label">Initial Location</label>
+                    <input className="form-control erp-input" placeholder="e.g. A01" value={registerRobotForm.currentLocation} onChange={(e) => setRegisterRobotForm({ ...registerRobotForm, currentLocation: e.target.value })} required />
+                  </div>
+                  <div className="col-md-2">
+                    <label className="erp-label">Battery %</label>
+                    <input type="number" className="form-control erp-input font-monospace" value={registerRobotForm.batteryLevel} onChange={(e) => setRegisterRobotForm({ ...registerRobotForm, batteryLevel: e.target.value })} required />
+                  </div>
+                  <div className="col-md-2">
+                    <button className="btn btn-dark erp-btn w-100">Reg</button>
+                  </div>
+                </form>
+
+                <h6 className="erp-section-title mb-3">Override Unit Status</h6>
+                <form className="row g-2 mb-4 align-items-end" onSubmit={updateRobot}>
+                  <div className="col-md-3">
+                    <label className="erp-label">Robot ID</label>
+                    <input className="form-control erp-input font-monospace" placeholder="ID" value={updateRobotForm.robotId} onChange={(e) => setUpdateRobotForm({ ...updateRobotForm, robotId: e.target.value })} required />
+                  </div>
+                  <div className="col-md-4">
+                    <label className="erp-label">Status Override</label>
+                    <select className="form-select erp-input" value={updateRobotForm.status} onChange={(e) => setUpdateRobotForm({ ...updateRobotForm, status: e.target.value })}>
+                      <option>Idle</option><option>Busy</option><option>Charging</option><option>Maintenance</option>
                     </select>
                   </div>
                   <div className="col-md-3">
-                    <input type="number" className="form-control" placeholder="Qty" value={line.quantity} onChange={(e) => updatePoLine(idx, { quantity: e.target.value })} required />
+                    <label className="erp-label">Location</label>
+                    <input className="form-control erp-input" placeholder="Loc" value={updateRobotForm.currentLocation} onChange={(e) => setUpdateRobotForm({ ...updateRobotForm, currentLocation: e.target.value })} required />
                   </div>
-                  <div className="col-md-1 d-grid">
-                    <button type="button" className="btn btn-outline-danger" onClick={() => removePoLine(idx)}>x</button>
+                  <div className="col-md-2">
+                    <button className="btn btn-outline-dark erp-btn w-100">Update</button>
                   </div>
-                </React.Fragment>
-              ))}
+                </form>
 
-              <div className="col-12 d-flex gap-2">
-                <button type="button" className="btn btn-outline-secondary" onClick={addPoLine}>Add Line</button>
-                <button className="btn btn-outline-primary">Create PO</button>
+                <h6 className="erp-section-title mb-3">Manual Task Assignment</h6>
+                <form className="row g-2 align-items-end" onSubmit={assignTaskToRobot}>
+                  <div className="col-md-8">
+                    <label className="erp-label">Sales Order Reference ID</label>
+                    <input type="number" className="form-control erp-input font-monospace" placeholder="Target Order ID" value={assignTaskForm.orderId} onChange={(e) => setAssignTaskForm({ orderId: e.target.value })} required />
+                  </div>
+                  <div className="col-md-4">
+                    <button className="btn btn-warning erp-btn w-100 fw-bold">Dispatch Unit</button>
+                  </div>
+                </form>
               </div>
-            </form>
+            </div>
 
-            <h6 className="small fw-bold text-muted text-uppercase mb-2">PO Receiving Scan</h6>
-            <form className="row g-2" onSubmit={receivePurchaseOrder}>
-              <div className="col-md-6">
-                <select className="form-select" value={receivePoForm.poId} onChange={(e) => setReceivePoForm({ ...receivePoForm, poId: e.target.value, purchaseOrderLineId: '' })} required>
-                  <option value="">Select Pending PO</option>
-                  {purchaseOrders.filter((p) => p.pendingQuantity > 0).map((po) => (
-                    <option key={po.id} value={po.id}>{po.poNumber} (Rem: {po.pendingQuantity})</option>
-                  ))}
-                </select>
+            <div className="erp-panel shadow-sm">
+              <div className="erp-panel-header bg-light">
+                <span className="fw-bold">IoT Device Event Emulator</span>
               </div>
-              <div className="col-md-6">
-                <select className="form-select" value={receivePoForm.purchaseOrderLineId} onChange={(e) => setReceivePoForm({ ...receivePoForm, purchaseOrderLineId: e.target.value })} required>
-                  <option value="">Select PO Line</option>
-                  {selectedPoLines.map((line) => (
-                    <option key={line.lineId} value={line.lineId}>Line {line.lineId} - {line.itemCode} - {line.warehouseName} - Pending {line.pendingQuantity}</option>
-                  ))}
-                </select>
+              <div className="p-4 bg-white">
+                <form className="row g-3" onSubmit={sendDeviceEvent}>
+                  <div className="col-md-4">
+                    <label className="erp-label">Device Type</label>
+                    <select className="form-select erp-input" value={deviceForm.deviceType} onChange={(e) => setDeviceForm({ ...deviceForm, deviceType: e.target.value })}>
+                      <option>RFID</option><option>Scanner</option><option>Robot</option><option>IoT</option>
+                    </select>
+                  </div>
+                  <div className="col-md-4">
+                    <label className="erp-label">Device UUID</label>
+                    <input className="form-control erp-input font-monospace" placeholder="ID" value={deviceForm.deviceId} onChange={(e) => setDeviceForm({ ...deviceForm, deviceId: e.target.value })} required />
+                  </div>
+                  <div className="col-md-4">
+                    <label className="erp-label">Event Hook</label>
+                    <input className="form-control erp-input" placeholder="e.g. Move" value={deviceForm.eventType} onChange={(e) => setDeviceForm({ ...deviceForm, eventType: e.target.value })} required />
+                  </div>
+                  <div className="col-md-6">
+                    <label className="erp-label">Item Context (Opt)</label>
+                    <select className="form-select erp-input" value={deviceForm.itemId} onChange={(e) => setDeviceForm({ ...deviceForm, itemId: e.target.value })}>
+                      <option value="">None</option>
+                      {items.map((i) => <option key={i.id} value={i.id}>{i.itemCode}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="erp-label">Location Context (Opt)</label>
+                    <select className="form-select erp-input" value={deviceForm.warehouseId} onChange={(e) => setDeviceForm({ ...deviceForm, warehouseId: e.target.value })}>
+                      <option value="">None</option>
+                      {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-md-8">
+                    <label className="erp-label">Raw Payload String</label>
+                    <input className="form-control erp-input font-monospace" placeholder="Data payload" value={deviceForm.payload} onChange={(e) => setDeviceForm({ ...deviceForm, payload: e.target.value })} required />
+                  </div>
+                  <div className="col-md-4 d-flex align-items-end">
+                    <button className="btn btn-primary erp-btn w-100">Inject Event</button>
+                  </div>
+                </form>
               </div>
-              <div className="col-md-3"><input type="number" className="form-control" placeholder="Qty" value={receivePoForm.quantity} onChange={(e) => setReceivePoForm({ ...receivePoForm, quantity: e.target.value })} /></div>
-              <div className="col-md-5"><input className="form-control" placeholder="Scanner ID" value={receivePoForm.scannerDeviceId} onChange={(e) => setReceivePoForm({ ...receivePoForm, scannerDeviceId: e.target.value })} /></div>
-              <div className="col-md-4"><button className="btn btn-success w-100">Receive</button></div>
-            </form>
+            </div>
           </div>
 
-          {/* Ledger Table */}
-          <div className="card border-0 shadow-sm rounded-4 p-4">
-            <h6 className="fw-bold mb-3">Purchase Order Ledger</h6>
-            <div className="table-responsive" style={{ maxHeight: '300px' }}>
-              <table className="table table-sm table-borderless small">
-                <thead className="text-muted border-bottom">
-                  <tr><th>PO #</th><th>Total Qty</th><th>Received</th><th>Pending</th><th>Status</th></tr>
-                </thead>
-                <tbody>
-                  {purchaseOrders.map((po) => (
-                    <tr key={po.id} className="border-bottom">
-                      <td>{po.poNumber}</td>
-                      <td>{po.totalQuantity}</td>
-                      <td>{po.receivedQuantity}</td>
-                      <td>{po.pendingQuantity}</td>
-                      <td><span className={`badge ${po.status === 'Closed' ? 'bg-success' : 'bg-secondary'}`}>{po.status}</span></td>
+          {/* Right Column: Procurement & AI */}
+          <div className="col-lg-6">
+            <div className="erp-panel shadow-sm mb-4">
+              <div className="erp-panel-header d-flex justify-content-between align-items-center bg-light">
+                <span className="fw-bold">AI Agent & Manual Procurement</span>
+                <button className="btn btn-success btn-sm erp-btn fw-bold px-3 py-1" onClick={runAi}>
+                  ✧ Trigger AI Procurement
+                </button>
+              </div>
+              <div className="p-4 bg-white">
+                <h6 className="erp-section-title mb-3">Quick Vendor Setup</h6>
+                <form className="row g-2 mb-4 align-items-end" onSubmit={createVendor}>
+                  <div className="col-md-3">
+                    <label className="erp-label">Code</label>
+                    <input className="form-control erp-input font-monospace" placeholder="V-001" value={vendorForm.vendorCode} onChange={(e) => setVendorForm({ ...vendorForm, vendorCode: e.target.value })} required />
+                  </div>
+                  <div className="col-md-4">
+                    <label className="erp-label">Company Name</label>
+                    <input className="form-control erp-input" placeholder="Name" value={vendorForm.name} onChange={(e) => setVendorForm({ ...vendorForm, name: e.target.value })} required />
+                  </div>
+                  <div className="col-md-3">
+                    <label className="erp-label">Email</label>
+                    <input type="email" className="form-control erp-input" placeholder="email@dom.com" value={vendorForm.email} onChange={(e) => setVendorForm({ ...vendorForm, email: e.target.value })} required />
+                  </div>
+                  <div className="col-md-2">
+                    <button className="btn btn-outline-primary erp-btn w-100">Add</button>
+                  </div>
+                </form>
+
+                <h6 className="erp-section-title mb-3">Draft Purchase Order</h6>
+                <form onSubmit={createPurchaseOrder} className="mb-4">
+                  <div className="row g-3 mb-3">
+                    <div className="col-md-4">
+                      <label className="erp-label">Vendor Select</label>
+                      <select className="form-select erp-input" value={poForm.vendorId} onChange={(e) => setPoForm({ ...poForm, vendorId: e.target.value })} required>
+                        <option value="">-- Choose --</option>
+                        {vendors.map((vnd) => <option key={vnd.id} value={vnd.id}>{vnd.vendorCode} - {vnd.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="col-md-8">
+                      <label className="erp-label">Procurement Rationale</label>
+                      <input className="form-control erp-input" placeholder="Reason for request" value={poForm.reason} onChange={(e) => setPoForm({ ...poForm, reason: e.target.value })} required />
+                    </div>
+                  </div>
+
+                  <div className="bg-light p-2 border rounded mb-3">
+                    <label className="erp-label ms-1">Line Items</label>
+                    {poForm.lines.map((line, idx) => (
+                      <div key={idx} className="row g-2 align-items-end mb-2 pb-2 border-bottom erp-line-item mx-0">
+                        <div className="col-md-4">
+                          <select className="form-select erp-input" value={line.itemId} onChange={(e) => updatePoLine(idx, { itemId: e.target.value })} required>
+                            <option value="">Item...</option>
+                            {items.map((i) => <option key={i.id} value={i.id}>{i.itemCode}</option>)}
+                          </select>
+                        </div>
+                        <div className="col-md-4">
+                          <select className="form-select erp-input" value={line.warehouseId} onChange={(e) => updatePoLine(idx, { warehouseId: e.target.value })} required>
+                            <option value="">Warehouse...</option>
+                            {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                          </select>
+                        </div>
+                        <div className="col-md-3">
+                          <input type="number" className="form-control erp-input font-monospace text-end" placeholder="Qty" value={line.quantity} onChange={(e) => updatePoLine(idx, { quantity: e.target.value })} min="1" required />
+                        </div>
+                        <div className="col-md-1 d-flex">
+                          <button type="button" className="btn btn-outline-danger erp-btn w-100 fw-bold px-1" onClick={() => removePoLine(idx)} disabled={poForm.lines.length === 1}>✕</button>
+                        </div>
+                      </div>
+                    ))}
+                    <button type="button" className="btn btn-sm btn-light border erp-btn fw-bold text-primary ms-1 mt-1" onClick={addPoLine}>+ Add Line</button>
+                  </div>
+                  
+                  <div className="text-end">
+                    <button className="btn btn-primary erp-btn px-4">Generate Purchase Order</button>
+                  </div>
+                </form>
+
+                <h6 className="erp-section-title mb-3">GRN Terminal (Receiving)</h6>
+                <form className="row g-2 p-3 bg-light border rounded" onSubmit={receivePurchaseOrder}>
+                  <div className="col-md-6">
+                    <label className="erp-label">Target PO</label>
+                    <select className="form-select erp-input font-monospace" value={receivePoForm.poId} onChange={(e) => setReceivePoForm({ ...receivePoForm, poId: e.target.value, purchaseOrderLineId: '' })} required>
+                      <option value="">-- Pending POs --</option>
+                      {purchaseOrders.filter((p) => p.pendingQuantity > 0).map((po) => (
+                        <option key={po.id} value={po.id}>{po.poNumber} (Rem: {po.pendingQuantity})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="erp-label">Line Detail</label>
+                    <select className="form-select erp-input font-monospace" value={receivePoForm.purchaseOrderLineId} onChange={(e) => setReceivePoForm({ ...receivePoForm, purchaseOrderLineId: e.target.value })} required disabled={!receivePoForm.poId}>
+                      <option value="">-- Line Selection --</option>
+                      {selectedPoLines.map((line) => (
+                        <option key={line.lineId} value={line.lineId}>Ln {line.lineId} | {line.itemCode} | {line.warehouseName} | Rem: {line.pendingQuantity}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="col-md-3 mt-2">
+                    <label className="erp-label">Qty</label>
+                    <input type="number" className="form-control erp-input font-monospace text-end" placeholder="Full" value={receivePoForm.quantity} onChange={(e) => setReceivePoForm({ ...receivePoForm, quantity: e.target.value })} min="0" step="0.01" />
+                  </div>
+                  <div className="col-md-5 mt-2">
+                    <label className="erp-label">Scanner ID</label>
+                    <input className="form-control erp-input font-monospace" placeholder="ID" value={receivePoForm.scannerDeviceId} onChange={(e) => setReceivePoForm({ ...receivePoForm, scannerDeviceId: e.target.value })} />
+                  </div>
+                  <div className="col-md-4 mt-2 d-flex align-items-end">
+                    <button className="btn btn-success erp-btn w-100 fw-bold">Process GRN</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+            {/* Ledger Table */}
+            <div className="erp-panel shadow-sm">
+              <div className="erp-panel-header bg-light">
+                <span className="fw-bold">Procurement Ledger Overview</span>
+              </div>
+              <div className="erp-table-container overflow-auto bg-white" style={{ maxHeight: '250px' }}>
+                <table className="table erp-table table-hover align-middle mb-0">
+                  <thead className="table-light">
+                    <tr>
+                      <th>PO #</th>
+                      <th className="text-end">Total</th>
+                      <th className="text-end">Received</th>
+                      <th className="text-end">Pending</th>
+                      <th className="text-center">Status</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {purchaseOrders.length === 0 ? (
+                      <tr><td colSpan="5" className="text-center text-muted py-3">No Purchase Orders in ledger.</td></tr>
+                    ) : (
+                      purchaseOrders.map((po) => (
+                        <tr key={po.id}>
+                          <td className="fw-bold text-dark font-monospace">{po.poNumber}</td>
+                          <td className="text-end font-monospace">{po.totalQuantity}</td>
+                          <td className="text-end font-monospace text-success">{po.receivedQuantity}</td>
+                          <td className={`text-end font-monospace fw-bold ${po.pendingQuantity > 0 ? 'text-danger' : ''}`}>{po.pendingQuantity}</td>
+                          <td className="text-center">
+                            <span className={`erp-status-tag ${po.status === 'Closed' ? 'tag-success' : 'tag-secondary'}`}>{po.status}</span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>
       </div>
+
+      <style>{`
+        /* --- ERP THEME CSS --- */
+        :root {
+          --erp-primary: #0f4c81;
+          --erp-bg: #eef2f5;
+          --erp-surface: #ffffff;
+          --erp-border: #cfd8dc;
+          --erp-text-main: #263238;
+          --erp-text-muted: #607d8b;
+        }
+
+        .erp-app-wrapper {
+          background-color: var(--erp-bg);
+          color: var(--erp-text-main);
+          font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+          font-size: 0.85rem;
+        }
+
+        .erp-text-muted { color: var(--erp-text-muted) !important; }
+
+        /* Panels */
+        .erp-panel {
+          background: var(--erp-surface);
+          border: 1px solid var(--erp-border);
+          border-radius: 4px;
+          overflow: hidden;
+        }
+        .erp-panel-header {
+          border-bottom: 1px solid var(--erp-border);
+          padding: 12px 16px;
+          font-size: 0.85rem;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          color: #34495e;
+        }
+
+        /* Inputs & Buttons */
+        .erp-input {
+          border-radius: 3px;
+          border-color: #b0bec5;
+          font-size: 0.85rem;
+          padding: 6px 10px;
+        }
+        .erp-input:focus {
+          border-color: var(--erp-primary);
+          box-shadow: 0 0 0 2px rgba(15, 76, 129, 0.2);
+        }
+        .erp-btn {
+          border-radius: 3px;
+          font-weight: 600;
+          letter-spacing: 0.2px;
+          font-size: 0.8rem;
+          padding: 6px 14px;
+        }
+        .erp-label {
+          font-size: 0.7rem;
+          font-weight: 700;
+          color: var(--erp-text-muted);
+          text-transform: uppercase;
+          margin-bottom: 4px;
+          display: block;
+        }
+        .erp-section-title {
+          font-size: 0.75rem;
+          font-weight: 700;
+          color: #90a4ae;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          border-bottom: 1px solid var(--erp-border);
+          padding-bottom: 4px;
+          margin-bottom: 12px;
+        }
+
+        /* Line Items */
+        .erp-line-item:last-child {
+          border-bottom: none !important;
+          margin-bottom: 0 !important;
+          padding-bottom: 0 !important;
+        }
+
+        /* Data Table */
+        .erp-table-container::-webkit-scrollbar { width: 8px; height: 8px; }
+        .erp-table-container::-webkit-scrollbar-thumb { background: #b0bec5; border-radius: 4px; }
+        .erp-table-container::-webkit-scrollbar-track { background: #eceff1; }
+        
+        .erp-table { font-size: 0.8rem; }
+        .erp-table thead th {
+          background-color: #f1f5f9;
+          color: #475569;
+          font-weight: 700;
+          text-transform: uppercase;
+          font-size: 0.7rem;
+          position: sticky;
+          top: 0;
+          z-index: 10;
+          border-bottom: 2px solid #cbd5e1;
+          padding: 8px 12px;
+          white-space: nowrap;
+        }
+        .erp-table tbody td {
+          padding: 8px 12px;
+          vertical-align: middle;
+          border-color: #e2e8f0;
+        }
+
+        /* Status Tags */
+        .erp-status-tag {
+          font-size: 0.6rem;
+          font-weight: 700;
+          padding: 3px 6px;
+          border-radius: 2px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          display: inline-block;
+          white-space: nowrap;
+        }
+        .tag-success { background-color: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+        .tag-warning { background-color: #fef9c3; color: #854d0e; border: 1px solid #fef08a; }
+        .tag-danger { background-color: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+        .tag-info { background-color: #e0f2fe; color: #075985; border: 1px solid #bae6fd; }
+        .tag-secondary { background-color: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
+      `}</style>
     </div>
   );
 }

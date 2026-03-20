@@ -137,7 +137,7 @@ export const smartErpApi = {
     api.post("/payments", payload),
 
   getInvoices: () =>
-    api.get("/api/invoices"),
+    api.get("/invoices"),
 
 
   // Dashboard
