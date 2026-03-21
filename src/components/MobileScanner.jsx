@@ -3129,13 +3129,11 @@
 
 
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
-import api from '../services/apiClient';
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import api from "../services/apiClient";
+import { smartErpApi } from "../services/smartErpApi";
 
-const SCAN_COOLDOWN_MS = 2000;
-
-// Base template for the on-the-fly item creation
 const createEmptyProductForm = () => ({
   itemCode: "",
   description: "",
@@ -3153,110 +3151,92 @@ const createEmptyProductForm = () => ({
   averageDailySales: 0
 });
 
-export default function MobileScanner({
-  items = [],
-  warehouses = [],
-  fetchData = () => {},
-  onScanDetected = () => {}
-}) {
-  const videoRef = useRef(null);
-  const codeReaderRef = useRef(null);
-  const lastScan = useRef({ barcode: '', timestamp: 0 });
-
-  // --- Global States ---
-  const [cameraActive, setCameraActive] = useState(false);
-  const [cameraError, setCameraError] = useState('');
-  const [manualInput, setManualInput] = useState('');
-  const [status, setStatus] = useState({ type: '', text: '' });
+export default function SmartERP() {
+  const [items, setItems] = useState([]);
+  const [warehouses, setWarehouses] = useState([]);
+  const [inventory, setInventory] = useState([]);
+  const [poMap, setPoMap] = useState({}); 
+  const [isOffline, setIsOffline] = useState(false);
   const [loading, setLoading] = useState(false);
-  
-  // --- Context States ---
-  const [currentItem, setCurrentItem] = useState(null);
-  const [detectedBarcode, setDetectedBarcode] = useState('');
-  const [lastScannedBarcode, setLastScannedBarcode] = useState('');
-  
-  // --- Navigation & Modes ---
-  const [activeTab, setActiveTab] = useState('stock'); // 'stock' or 'po'
-  const [txMode, setTxMode] = useState('in'); // 'in', 'out', 'transfer'
-  
-  const defaultWarehouseId = warehouses.length ? String(warehouses[0].id) : '';
+  const [message, setMessage] = useState({ text: "", type: "" });
+
+  const navigate = useNavigate();
+
+  // --- Form States ---
+  const [productForm, setProductForm] = useState(createEmptyProductForm());
+  const [activeItem, setActiveItem] = useState(null); // Used for table dialog
+  const [detailItem, setDetailItem] = useState(null); // Used for view dialog
+  const [editForm, setEditForm] = useState(null);
+  const [isEditingProduct, setIsEditingProduct] = useState(false);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [stockForm, setStockForm] = useState({ warehouseId: "", quantity: 0, lotNumber: "", scannerDeviceId: "SCN-01" });
+
+  // --- Main Operations Panel States ---
+  const [activeTab, setActiveTab] = useState('stock'); 
+  const [txMode, setTxMode] = useState('in'); 
+  const [barcodeInput, setBarcodeInput] = useState('');
   const [txForm, setTxForm] = useState({
     itemId: '',
-    warehouseId: defaultWarehouseId,
+    warehouseId: '',
     destWarehouseId: '',
-    lotId: '',
     quantity: '',
-    lotNumber: ''
+    lotNumber: '', // For IN mode typing
+    lotId: ''      // For OUT/TRANSFER selection
   });
 
-  // --- PO States ---
-  const [poLoading, setPoLoading] = useState(false);
-  const [poList, setPoList] = useState([]);
-  const [filteredPoList, setFilteredPoList] = useState([]);
-  const [selectedPoNumber, setSelectedPoNumber] = useState('');
-  const [currentPoLine, setCurrentPoLine] = useState(null);
-  const selectedPo = useMemo(
-    () => poList.find((po) => po.poNumber === selectedPoNumber) ?? null,
-    [poList, selectedPoNumber]
-  );
-
-  // --- Lot States ---
   const [availableLots, setAvailableLots] = useState([]);
   const [lotsLoading, setLotsLoading] = useState(false);
 
-  // --- Master Data Creation States (404 Intercept) ---
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [productForm, setProductForm] = useState(createEmptyProductForm());
-  const [createLoading, setCreateLoading] = useState(false);
+  // --- Serial Generation States ---
+  const [showSerialModal, setShowSerialModal] = useState(false);
+  const [serialGenerationForm, setSerialGenerationForm] = useState({
+    quantity: 0,
+    generatedSerials: []
+  });
 
-  // --- Helper Functions ---
-  const showStatus = useCallback((type, text) => {
-    setStatus({ type, text });
-    setTimeout(() => setStatus({ type: '', text: '' }), 4000);
-  }, []);
+  const warehouseNameById = useCallback((id) => {
+    if (id == null) return "General warehouse";
+    const warehouse = warehouses.find((w) => Number(w.id) === Number(id));
+    return warehouse?.name || `WH-${id}`;
+  }, [warehouses]);
 
-  const findBackCamera = useCallback(async () => {
-    if (!navigator?.mediaDevices?.enumerateDevices) return undefined;
+  const loadAllData = async () => {
+    setLoading(true);
     try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter((device) => device.kind === 'videoinput');
-      const backCamera = videoDevices.find((device) => /(back|rear|environment)/i.test(device.label || ''));
-      return backCamera?.deviceId ?? videoDevices[0]?.deviceId;
-    } catch (error) {
-      console.error('Camera enumeration failed', error);
-      return undefined;
-    }
-  }, []);
-
-  const resetScanState = useCallback(() => {
-    setLastScannedBarcode('');
-    setDetectedBarcode('');
-    setCurrentItem(null);
-    setCurrentPoLine(null);
-    setSelectedPoNumber('');
-    setTxForm(prev => ({...prev, itemId: '', quantity: '', lotNumber: '', lotId: '', warehouseId: defaultWarehouseId}));
-    setAvailableLots([]);
-  }, [defaultWarehouseId]);
-
-  // --- API Loaders ---
-  const loadPendingPurchaseOrders = useCallback(async () => {
-    setPoLoading(true);
-    try {
-      const response = await api.get('/purchase-orders/pending');
-      setPoList(response.data || []);
-      setFilteredPoList(response.data || []);
-    } catch (error) {
-      setPoList([]);
-      setFilteredPoList([]);
+      const [resItems, resWh, resInv, resPO] = await Promise.all([
+        api.get("/stock/items"),
+        api.get("/warehouses"),
+        api.get("/stock/inventory"),
+        smartErpApi.getPurchaseOrders()
+      ]);
+      setItems(resItems.data || []);
+      setWarehouses(resWh.data || []);
+      setInventory(resInv.data || []);
+      
+      const map = {};
+      (resPO.data || []).forEach(po => {
+        (po.Lines || []).forEach(line => {
+          if (!map[line.ItemId]) map[line.ItemId] = 0;
+          map[line.ItemId] += line.PendingQuantity || 0;
+        });
+      });
+      setPoMap(map);
+      setIsOffline(false);
+    } catch (err) {
+      setIsOffline(true);
+      setMessage({ text: "Gateway Connectivity Lost", type: "danger" });
     } finally {
-      setPoLoading(false);
+      setLoading(false);
     }
-  }, []);
+  };
 
   useEffect(() => {
-    loadPendingPurchaseOrders();
-  }, [loadPendingPurchaseOrders]);
+    loadAllData();
+    const interval = setInterval(loadAllData, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
+  // Fetch lots dynamically for OUT/TRANSFER based on selected Item/Warehouse
   const loadAvailableLots = useCallback(async () => {
     const scannerItemId = parseInt(txForm.itemId, 10);
     const scannerWarehouseId = parseInt(txForm.warehouseId, 10);
@@ -3284,206 +3264,102 @@ export default function MobileScanner({
     loadAvailableLots();
   }, [loadAvailableLots]);
 
-  // Auto-Select Lot for OUT / TRANSFER
-  useEffect(() => {
-    if (availableLots.length > 0 && (txMode === 'out' || txMode === 'transfer')) {
-      const validLot = availableLots.find(l => l.quantity > 0);
-      if (validLot && !txForm.lotId) {
-        setTxForm(prev => ({ ...prev, lotId: String(validLot.lotId) }));
-      }
-    }
-  }, [availableLots, txMode, txForm.lotId]);
-
-  // Auto-Filter POs based on Scanned Item
-  useEffect(() => {
-    if (!txForm.itemId) {
-      setFilteredPoList(poList);
-    } else {
-      const filtered = poList.filter(po => po.lines.some(l => String(l.itemId) === String(txForm.itemId) && l.pendingQty > 0));
-      setFilteredPoList(filtered);
-      if (filtered.length === 1 && selectedPoNumber !== filtered[0].poNumber) {
-        setSelectedPoNumber(filtered[0].poNumber);
-      } else if (filtered.length === 0) {
-        setSelectedPoNumber('');
-      }
-    }
-  }, [poList, txForm.itemId, selectedPoNumber]);
-
-  // Auto-Select PO Line
-  useEffect(() => {
-    if (selectedPo && txForm.itemId) {
-      const match = selectedPo.lines.find(l => String(l.itemId) === String(txForm.itemId));
-      if (match) {
-        setCurrentPoLine(match);
-        setTxForm(prev => ({ ...prev, warehouseId: String(match.warehouseId) }));
-      } else {
-        setCurrentPoLine(null);
-      }
-    } else {
-      setCurrentPoLine(null);
-    }
-  }, [selectedPo, txForm.itemId]);
-
-  // --- Camera & Scanning Logic ---
-  const stopCamera = useCallback(() => {
-    try {
-      codeReaderRef.current?.reset();
-    } catch (error) {
-      console.error('Camera cleanup failed', error);
-    }
-    setCameraActive(false);
-  }, []);
-
-  const resolveBarcode = useCallback(
-    async (barcodeValue) => {
-      const trimmed = (barcodeValue || '').trim();
-      if (!trimmed) return null;
-      
-      setCurrentItem(null);
-      setCurrentPoLine(null);
-      setDetectedBarcode(trimmed);
-      
-      try {
-        const response = await api.get(`/items/barcode/${encodeURIComponent(trimmed)}`);
-        const payload = response.data;
-        const autoWarehouseId = payload.inventory?.warehouseId ?? warehouses[0]?.id ?? '';
-        
-        setCurrentItem({
-          itemId: payload.itemId,
-          itemCode: payload.itemCode,
-          description: payload.itemName,
-          serialPrefix: payload.serialPrefix
-        });
-        
-        setTxForm((prev) => {
-          const prevQty = parseInt(prev.quantity, 10) || 0;
-          const nextQty = trimmed === lastScannedBarcode ? prevQty + 1 : 1;
-          return {
-            ...prev,
-            itemId: String(payload.itemId),
-            warehouseId: String(autoWarehouseId),
-            quantity: String(nextQty),
-            lotNumber: '', // Reset lot number on new scan
-            lotId: ''
-          };
-        });
-
-        setLastScannedBarcode(trimmed);
-
-        if (activeTab === 'po') {
-          showStatus('info', `Item matched. Please verify PO Line.`);
-        } else {
-          showStatus('success', `Detected: ${payload.itemCode}`);
-        }
-        
-        onScanDetected({ itemId: payload.itemId, warehouseId: autoWarehouseId });
-        stopCamera();
-        return payload;
-
-      } catch (err) {
-        console.error('Barcode lookup failed', err);
-        const status = err?.response?.status;
-        
-        // INTERCEPT 404: Open Item Creation Modal
-        if (status === 404) {
-          stopCamera();
-          showStatus('warning', 'Unknown barcode. Register item to continue.');
-          setProductForm({
-            ...createEmptyProductForm(),
-            barcode: trimmed,
-            itemCode: `ITEM-${trimmed.substring(0, 6).toUpperCase()}` // Auto-suggest code
-          });
-          setShowCreateForm(true);
-        } else {
-          showStatus('error', 'Failed to resolve barcode');
-        }
-        return null;
-      }
-    },
-    [onScanDetected, showStatus, warehouses, activeTab, lastScannedBarcode, stopCamera]
-  );
-
-  const handleDetectedCode = useCallback(async (code) => {
-    const trimmed = (code || '').trim();
-    if (!trimmed) return;
-    const now = Date.now();
-    if (trimmed !== lastScan.current.barcode || now - lastScan.current.timestamp >= SCAN_COOLDOWN_MS) {
-      lastScan.current = { barcode: trimmed, timestamp: now };
-      await resolveBarcode(trimmed);
-    }
-  }, [resolveBarcode]);
-
-  const handleManualSubmit = async (e) => {
+  // --- BARCODE LOOKUP & 404 INTERCEPTOR ---
+  const handleBarcodeSubmit = async (e) => {
     e.preventDefault();
-    if (!manualInput) return;
-    await handleDetectedCode(manualInput);
-    setManualInput('');
+    const trimmed = barcodeInput.trim();
+    if (!trimmed) return;
+
+    try {
+      // Check backend for barcode
+      const response = await api.get(`/items/barcode/${encodeURIComponent(trimmed)}`);
+      const payload = response.data;
+      
+      const matchedItem = items.find(i => i.id === payload.itemId) || payload;
+      
+      // Auto-populate the txForm
+      setTxForm(prev => ({
+        ...prev,
+        itemId: String(matchedItem.id || matchedItem.itemId),
+        warehouseId: matchedItem.warehouseLocation ? String(warehouses.find(w => w.name === matchedItem.warehouseLocation)?.id || prev.warehouseId) : prev.warehouseId
+      }));
+      
+      setMessage({ text: `✓ Item detected: ${matchedItem.itemCode}`, type: "success" });
+      setBarcodeInput('');
+      
+    } catch (err) {
+      if (err?.response?.status === 404) {
+        // INTERCEPT 404: Auto-open Master Data Creation
+        setMessage({ text: `Barcode ${trimmed} not found. Registering new item.`, type: "warning" });
+        setProductForm({
+          ...createEmptyProductForm(),
+          barcode: trimmed,
+          itemCode: `ITEM-${trimmed.substring(0, 6).toUpperCase()}`
+        });
+        setShowCreateForm(true);
+        setBarcodeInput('');
+      } else {
+        setMessage({ text: "Failed to resolve barcode.", type: "danger" });
+      }
+    }
   };
 
-  const startCamera = useCallback(async () => {
-    if (!videoRef.current) return;
-    setCameraError('');
-    try {
-      if (codeReaderRef.current) codeReaderRef.current.reset();
-      else codeReaderRef.current = new BrowserMultiFormatReader();
-
-      const deviceId = await findBackCamera();
-      codeReaderRef.current.decodeFromVideoDevice(deviceId ?? undefined, videoRef.current, (result, error) => {
-        if (result) handleDetectedCode(result.getText());
-      }).catch((err) => {
-        setCameraError(`Camera unavailable: ${err.message}`);
-        setCameraActive(false);
-      });
-
-      setCameraActive(true);
-      showStatus('info', 'Camera active. Point at barcode.');
-    } catch (err) {
-      setCameraError(`Camera unavailable: ${err.message}`);
-      setCameraActive(false);
-    }
-  }, [handleDetectedCode, showStatus, findBackCamera]);
-
-  useEffect(() => {
-    void startCamera();
-    return stopCamera;
-  }, [startCamera, stopCamera]);
-
-  // --- ON-THE-FLY ITEM CREATION ---
   const handleCreateProduct = async (e) => {
     e.preventDefault();
-    setCreateLoading(true);
     try {
-      await api.post("/smart-erp/products", {
-        ...productForm,
+      const payload = {
+        itemCode: productForm.itemCode,
+        description: productForm.description,
+        barcode: productForm.barcode,
+        category: productForm.category,
+        unit: productForm.unit,
         price: Number(productForm.price),
+        warehouseLocation: productForm.warehouseLocation,
+        isLotTracked: productForm.isLotTracked,
+        serialPrefix: productForm.serialPrefix || null,
+        itemType: productForm.itemType,
         maxStockLevel: Number(productForm.maxStockLevel),
         safetyStock: Number(productForm.safetyStock),
         leadTimeDays: Number(productForm.leadTimeDays),
         averageDailySales: Number(productForm.averageDailySales)
-      });
+      };
+
+      const res = await api.post("/smart-erp/products", payload);
+      setMessage({ text: "✓ Item Created Successfully", type: "success" });
       
-      const newBarcode = productForm.barcode;
-      showStatus("success", "Item Registered! Resuming scan...");
+      // Auto-select the newly created item in the operations panel
+      if (res.data?.id) {
+        setTxForm(prev => ({ ...prev, itemId: String(res.data.id) }));
+      }
+      
       setProductForm(createEmptyProductForm());
       setShowCreateForm(false);
-      fetchData(); 
-      
-      // Auto-resolve newly created item to seamlessly continue workflow
-      if (newBarcode) await resolveBarcode(newBarcode);
-      else void startCamera();
-      
+      await loadAllData();
     } catch (err) {
-      showStatus("error", err?.response?.data?.message || "Registration failed.");
-    } finally {
-      setCreateLoading(false);
+      const errorMsg = err?.response?.data?.message || err?.response?.data || "Product registration failed.";
+      setMessage({ text: typeof errorMsg === 'object' ? JSON.stringify(errorMsg) : errorMsg, type: "danger" });
     }
   };
 
-  // --- TRANSACTION EXECUTION ---
-  const handleStockTransaction = async (e) => {
+  const handleBarcodeChange = (value) => {
+    setProductForm((prev) => {
+      const trimmedDescription = prev.description?.trim() ?? "";
+      const autoDescription = value ? `ITEM-${value}` : "";
+      const shouldAutoFill = !trimmedDescription && autoDescription;
+      return {
+        ...prev,
+        barcode: value,
+        description: shouldAutoFill ? autoDescription : prev.description,
+        isLotTracked: prev.isLotTracked || Boolean(autoDescription)
+      };
+    });
+  };
+
+  // --- UNIFIED TRANSACTION PROTOCOL (IN / OUT / XFER) ---
+  const executeTransaction = async (e) => {
     e?.preventDefault();
     if (!txForm.itemId || !txForm.warehouseId || !txForm.quantity) {
-      return showStatus('error', 'Provide valid item, warehouse, and quantity');
+      return setMessage({ text: "Provide item, warehouse, and quantity", type: "danger" });
     }
 
     setLoading(true);
@@ -3495,326 +3371,711 @@ export default function MobileScanner({
         quantity: parseFloat(txForm.quantity),
       };
 
-      if (activeTab === 'po') {
-        if (!selectedPo || !currentPoLine) return showStatus('error', 'Valid PO Line required');
-        if (payload.quantity > currentPoLine.pendingQty) return showStatus('error', 'Exceeds PO pending amount');
-        
-        endpoint = '/purchase-orders/receive';
-        payload.poId = selectedPo.id;
-        // Strictly uses user input, else falls back to generic generated lot
-        payload.lotNumber = txForm.lotNumber?.trim() || `LOT-${Date.now().toString().slice(-6)}`;
-        payload.scannerDeviceId = 'MOBILE-SCAN';
-      } 
-      else if (activeTab === 'stock' && txMode === 'in') {
+      if (txMode === 'in') {
         endpoint = '/stock/in';
-        // Strictly uses whatever custom string the user typed (e.g. "gbighh")
-        payload.lotNumber = txForm.lotNumber?.trim() || null;
-      } 
-      else if (activeTab === 'stock' && txMode === 'out') {
-        if (!txForm.lotId) return showStatus('error', 'Source lot required for dispatch');
+        payload.lotNumber = txForm.lotNumber?.trim() || null; // Strictly uses typed input
+      } else if (txMode === 'out') {
+        if (!txForm.lotId) return setMessage({ text: "Source lot required for dispatch", type: "danger" });
         endpoint = '/stock/out';
         payload.lotId = parseInt(txForm.lotId, 10);
-      } 
-      else if (activeTab === 'stock' && txMode === 'transfer') {
-        if (!txForm.lotId || !txForm.destWarehouseId) return showStatus('error', 'Lot and Dest Warehouse required');
+      } else if (txMode === 'transfer') {
+        if (!txForm.lotId || !txForm.destWarehouseId) return setMessage({ text: "Lot and Dest Warehouse required", type: "danger" });
         endpoint = '/stock/transfer';
         payload.lotId = parseInt(txForm.lotId, 10);
         payload.destinationWarehouseId = parseInt(txForm.destWarehouseId, 10);
       }
 
-      const response = await api.post(endpoint, payload);
-      showStatus('success', response.data?.message || `Transaction recorded successfully`);
+      // Attach generated serials to payload if any exist
+      if (serialGenerationForm.generatedSerials.length > 0) {
+        payload.serialNumbers = serialGenerationForm.generatedSerials.map(s => s.serialNumber);
+      }
+
+      await api.post(endpoint, payload);
+      setMessage({ text: `✓ Stock ${txMode.toUpperCase()} recorded successfully`, type: "success" });
       
-      resetScanState();
-      fetchData();
-      if (activeTab === 'po') void loadPendingPurchaseOrders();
-      void startCamera();
-      
+      // Reset Forms
+      setTxForm(prev => ({ ...prev, quantity: '', lotNumber: '', lotId: '', destWarehouseId: '' }));
+      setSerialGenerationForm({ quantity: 0, generatedSerials: [] });
+      setShowSerialModal(false);
+      await loadAllData();
     } catch (err) {
-      showStatus('error', err.response?.data?.message || `Transaction failed`);
+      setMessage({ text: err.response?.data?.message || err.response?.data || `Stock ${txMode.toUpperCase()} failed`, type: "danger" });
     } finally {
       setLoading(false);
     }
   };
 
-  const getAlertClass = (type) => {
-    if (type === 'success') return 'alert-success border-success text-success';
-    if (type === 'error') return 'alert-danger border-danger text-danger';
-    if (type === 'warning') return 'alert-warning border-warning text-warning';
-    return 'alert-info border-info text-info';
+  // --- SERIAL GENERATION LOGIC ---
+  const openSerialGenerationModal = () => {
+    if (!txForm.itemId || !txForm.warehouseId || !txForm.quantity || parseFloat(txForm.quantity) <= 0) {
+      return setMessage({ text: "Valid Item, Warehouse, and Quantity required first.", type: "warning" });
+    }
+    setSerialGenerationForm({
+      quantity: parseFloat(txForm.quantity),
+      generatedSerials: []
+    });
+    setShowSerialModal(true);
   };
 
+  const generateSerialNumbers = () => {
+    const qty = serialGenerationForm.quantity;
+    if (qty <= 0 || qty > 100) return setMessage({ text: 'Limit: 1-100 units per batch', type: "warning" });
+    
+    const selectedItem = items.find(i => String(i.id) === String(txForm.itemId));
+    const prefix = selectedItem?.serialPrefix || `SN-${selectedItem?.itemCode || 'ITEM'}`;
+    const timestamp = Date.now().toString().slice(-4);
+    
+    const serials = Array.from({ length: qty }, (_, i) => ({
+      serialNumber: `${prefix}-${timestamp}-${String(i + 1).padStart(4, '0')}`
+    }));
+
+    setSerialGenerationForm(prev => ({ ...prev, generatedSerials: serials }));
+  };
+
+
+  const handleEditSubmit = async (e) => {
+    e.preventDefault();
+    if (!detailItem || !editForm) return;
+    try {
+      const payload = {
+        itemCode: editForm.itemCode.trim(),
+        description: editForm.description.trim(),
+        barcode: editForm.barcode.trim(),
+        category: editForm.category.trim(),
+        unit: editForm.unit.trim(),
+        price: Number(editForm.price),
+        warehouseLocation: editForm.warehouseLocation.trim(),
+        isLotTracked: Boolean(editForm.isLotTracked),
+        serialPrefix: editForm.serialPrefix.trim(),
+        maxStockLevel: Number(editForm.maxStockLevel),
+        safetyStock: Number(editForm.safetyStock),
+        leadTimeDays: Number(editForm.leadTimeDays),
+        averageDailySales: Number(editForm.averageDailySales)
+      };
+      const response = await api.put(`/smart-erp/products/${detailItem.id}`, payload);
+      setDetailItem(response.data);
+      setMessage({ text: "Item updated successfully", type: "success" });
+      setIsEditingProduct(false);
+      await loadAllData();
+    } catch (err) {
+      const errorMsg = err?.response?.data?.message || err?.response?.data || "Item update failed.";
+      setMessage({ text: typeof errorMsg === 'object' ? JSON.stringify(errorMsg) : errorMsg, type: "danger" });
+    }
+  };
+
+  const totalStock = (itemId) => inventory
+    .filter((i) => i.itemId === itemId)
+    .reduce((sum, i) => sum + Number(i.quantity || i.Quantity || 0), 0);
+
+  const createPoForItem = async (item) => {
+    const currentStock = totalStock(item.id);
+    const maxLevel = item.maxStockLevel || 1000;
+    const qty = Math.max(0, maxLevel - currentStock);
+    if (qty <= 0) {
+      setMessage({ text: "Stock is already at or above max level", type: "info" });
+      return;
+    }
+    try {
+      const warehouseId = warehouses[0]?.id || 0;
+      await smartErpApi.createPurchaseOrder({
+        Reason: `Manual reorder below ${maxLevel}`,
+        VendorId: null,
+        SupplierName: "",
+        Lines: [{ ItemId: item.id, WarehouseId: warehouseId, Quantity: qty }]
+      });
+      setMessage({ text: "Purchase order created", type: "success" });
+      await loadAllData();
+    } catch (e) {
+      setMessage({ text: "Failed to create PO", type: "danger" });
+    }
+  };
+
+  const detailInventoryRows = useMemo(() => {
+    if (!detailItem) return [];
+    const grouping = {};
+    inventory
+      .filter((i) => i.itemId === detailItem.id || i.ItemId === detailItem.id)
+      .forEach((row) => {
+        const warehouseId = row.warehouseId ?? row.WarehouseId;
+        const lotRaw = row.lotNumber ?? row.LotNumber ?? "general";
+        const lotNumber = lotRaw === "-" ? "general" : lotRaw;
+        const key = `${warehouseId}-${lotNumber}`;
+        if (!grouping[key]) {
+          grouping[key] = {
+            id: key,
+            warehouseId,
+            warehouseName: warehouseNameById(warehouseId),
+            lotNumber,
+            quantity: 0
+          };
+        }
+        grouping[key].quantity += Number(row.quantity ?? row.Quantity ?? 0);
+      });
+    return Object.values(grouping).sort((a, b) =>
+      (a.warehouseName || "").localeCompare(b.warehouseName || "") ||
+      (a.lotNumber || "").localeCompare(b.lotNumber || "")
+    );
+  }, [detailItem, inventory, warehouseNameById]);
+
+  useEffect(() => {
+    if (!detailItem) {
+      setEditForm(null);
+      setIsEditingProduct(false);
+      return;
+    }
+    setEditForm({
+      itemCode: detailItem.itemCode ?? "",
+      description: detailItem.description ?? "",
+      barcode: detailItem.barcode ?? "",
+      category: detailItem.category ?? "General",
+      unit: detailItem.unit ?? detailItem.UOM ?? "NOS",
+      price: detailItem.price ?? 0,
+      warehouseLocation: detailItem.warehouseLocation ?? "",
+      isLotTracked: detailItem.isLotTracked ?? false,
+      serialPrefix: detailItem.serialPrefix ?? "",
+      maxStockLevel: detailItem.maxStockLevel ?? 0,
+      safetyStock: detailItem.safetyStock ?? 0,
+      leadTimeDays: detailItem.leadTimeDays ?? 0,
+      averageDailySales: detailItem.averageDailySales ?? 0
+    });
+  }, [detailItem]);
+
+  if (isOffline) return <div className="p-5 text-center text-danger fw-bold fs-4">Gateway Connectivity Lost</div>;
+  if (loading && items.length === 0) return <div className="p-5 text-center fw-bold">Loading Data...</div>;
+
   return (
-    <div className="bg-white p-3 p-md-4 h-100 d-flex flex-column">
+    <div className="erp-app-wrapper min-vh-100">
       
-      {/* CAMERA VIEWFINDER */}
-      <div className="position-relative bg-dark rounded-3 overflow-hidden shadow-sm mb-3" style={{ minHeight: '220px' }}>
-        <video ref={videoRef} className="w-100 h-100 object-fit-cover" autoPlay muted playsInline />
-        <div className="position-absolute top-0 start-0 w-100 h-100 d-flex flex-column align-items-center justify-content-center" style={{ pointerEvents: 'none' }}>
-          <div className="scanner-laser" style={{ width: '70%', height: '2px', backgroundColor: '#10b981', boxShadow: '0 0 10px #10b981' }}></div>
-          <div className="text-white fw-bold mt-3 px-3 py-1 rounded" style={{ backgroundColor: 'rgba(0,0,0,0.5)', fontSize: '0.8rem' }}>
-            {cameraActive ? 'Scanning for barcodes...' : 'Camera Offline'}
+      {/* HEADER */}
+      <nav className="erp-topbar d-flex justify-content-end align-items-center px-4">
+        <div className="d-flex gap-3 align-items-center text-white-50 small">
+          <span>Connected: Gateway Active</span>
+          <span className="erp-status-dot bg-success"></span>
+        </div>
+      </nav>
+
+      <div className="container-fluid px-4 py-3">
+        
+        {message.text && (
+          <div className={`alert alert-${message.type} erp-alert d-flex justify-content-between align-items-center py-2 mb-3`}>
+            <span className="fw-semibold">{message.text}</span>
+            <button className="btn-close btn-sm" onClick={() => setMessage({ text: "", type: "" })}></button>
+          </div>
+        )}
+
+        <div className="row g-3">
+          {/* LEFT: SYSTEM CONTROLS & NEW MOVEMENT PROTOCOL */}
+          <div className="col-lg-4 col-xl-3">
+            
+            <div className="erp-panel mb-3">
+              <div className="erp-panel-header">System Controls</div>
+              <div className="p-3">
+                <button className="erp-btn btn btn-primary w-100 shadow-sm" onClick={() => setShowCreateForm(true)}>
+                  + Register New SKU
+                </button>
+              </div>
+            </div>
+
+            {/* INVENTORY MOVEMENT PROTOCOL (Active Tab) */}
+            {activeTab === 'stock' && (
+              <div className="erp-panel shadow-sm">
+                <div className="erp-panel-header d-flex justify-content-between align-items-center">
+                  <span>Movement Protocol</span>
+                </div>
+                <div className="p-3">
+                  
+                  {/* BARCODE SCANNER INPUT */}
+                  <form onSubmit={handleBarcodeSubmit} className="mb-4 pb-3 border-bottom d-flex gap-2">
+                    <div className="flex-grow-1">
+                      <label className="erp-label">Scan / Type Barcode</label>
+                      <input 
+                        type="text" 
+                        className="form-control erp-input font-monospace" 
+                        placeholder="Scan barcode..." 
+                        value={barcodeInput} 
+                        onChange={e => setBarcodeInput(e.target.value)} 
+                      />
+                    </div>
+                    <div className="d-flex align-items-end">
+                      <button type="submit" className="btn btn-dark erp-btn" disabled={!barcodeInput}>Find</button>
+                    </div>
+                  </form>
+
+                  {/* MODE SELECTOR */}
+                  <div className="btn-group w-100 mb-3 shadow-sm" role="group">
+                    <button type="button" className={`btn erp-btn ${txMode === 'in' ? 'btn-success fw-bold' : 'btn-light border'}`} onClick={() => { setTxMode('in'); setTxForm(p => ({...p, lotId: '', destWarehouseId: ''})); }}>📥 IN</button>
+                    <button type="button" className={`btn erp-btn ${txMode === 'out' ? 'btn-danger fw-bold' : 'btn-light border'}`} onClick={() => { setTxMode('out'); setTxForm(p => ({...p, lotNumber: '', destWarehouseId: ''})); }}>📤 OUT</button>
+                    <button type="button" className={`btn erp-btn ${txMode === 'transfer' ? 'btn-warning fw-bold text-dark' : 'btn-light border'}`} onClick={() => { setTxMode('transfer'); setTxForm(p => ({...p, lotNumber: ''})); }}>🔁 XFER</button>
+                  </div>
+
+                  <form onSubmit={(e) => e.preventDefault()}>
+                    <div className="mb-2">
+                      <label className="erp-label">Master Item ID <span className="text-danger">*</span></label>
+                      <select className="form-select erp-input font-monospace" value={txForm.itemId} onChange={(e) => setTxForm({ ...txForm, itemId: e.target.value })}>
+                        <option value="">-- Select Product --</option>
+                        {items.map((item) => (
+                          <option key={item.id} value={item.id}>{item.itemCode}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="mb-2">
+                      <label className="erp-label">Source Warehouse <span className="text-danger">*</span></label>
+                      <select className="form-select erp-input" value={txForm.warehouseId} onChange={(e) => setTxForm({ ...txForm, warehouseId: e.target.value })}>
+                        <option value="">-- Select Location --</option>
+                        {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                      </select>
+                    </div>
+
+                    <div className="row g-2 mb-3">
+                      <div className="col-4">
+                        <label className="erp-label">Qty <span className="text-danger">*</span></label>
+                        <input type="number" className="form-control erp-input font-monospace text-end" value={txForm.quantity} onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })} min="0" placeholder="0" />
+                      </div>
+
+                      {txMode === 'in' ? (
+                        <div className="col-8">
+                          <label className="erp-label">Assign Lot String</label>
+                          <input 
+                            type="text" 
+                            className="form-control erp-input font-monospace" 
+                            value={txForm.lotNumber} 
+                            onChange={(e) => setTxForm({ ...txForm, lotNumber: e.target.value })} 
+                            placeholder="Type custom lot..." 
+                          />
+                        </div>
+                      ) : (
+                        <div className="col-8">
+                          <label className="erp-label">Select Source Lot <span className="text-danger">*</span></label>
+                          <select className="form-select erp-input font-monospace" value={txForm.lotId} onChange={(e) => setTxForm({ ...txForm, lotId: e.target.value })} disabled={lotsLoading}>
+                            <option value="">{lotsLoading ? 'Loading...' : '-- Choose Active Lot --'}</option>
+                            {availableLots.filter(l => l.quantity > 0).map((lot) => (
+                              <option key={`${lot.lotId}-${lot.lotNumber}`} value={lot.lotId}>
+                                {lot.lotNumber || 'UNASSIGNED'} (Avail: {lot.quantity})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+
+                    {txMode === 'transfer' && (
+                      <div className="mb-3 p-2 bg-light border rounded">
+                        <label className="erp-label text-warning">Dest Location <span className="text-danger">*</span></label>
+                        <select className="form-select erp-input" value={txForm.destWarehouseId} onChange={(e) => setTxForm({ ...txForm, destWarehouseId: e.target.value })}>
+                          <option value="">-- Target Bin --</option>
+                          {warehouses.filter((w) => w.id !== parseInt(txForm.warehouseId, 10)).map((w) => (
+                            <option key={w.id} value={w.id}>{w.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="d-flex flex-column gap-2 pt-2 border-top">
+                      <button type="button" onClick={openSerialGenerationModal} disabled={loading || !txForm.itemId || !txForm.warehouseId || !txForm.quantity} className="btn btn-outline-primary erp-btn w-100 fw-bold">
+                        + ASSIGN SERIAL NUMBERS
+                      </button>
+                      <button type="button" onClick={executeTransaction} disabled={loading || !txForm.itemId || !txForm.warehouseId || !txForm.quantity} className={`btn erp-btn w-100 fw-bold ${txMode === 'in' ? 'btn-success' : txMode === 'out' ? 'btn-danger' : 'btn-warning text-dark'}`}>
+                        {loading ? 'PROCESSING...' : txMode === 'in' ? 'EXECUTE RECEIPT' : txMode === 'out' ? 'EXECUTE DISPATCH' : 'EXECUTE TRANSFER'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* RIGHT: INVENTORY DATA GRID */}
+          <div className="col-lg-8 col-xl-9">
+            <div className="erp-panel d-flex flex-column" style={{ height: "calc(100vh - 100px)" }}>
+              <div className="erp-panel-header d-flex justify-content-between align-items-center">
+                <span>Inventory Master Data</span>
+                <span className="badge bg-secondary">{items.length} Records</span>
+              </div>
+              <div className="erp-table-container flex-grow-1 overflow-auto">
+                <table className="table erp-table table-hover table-bordered mb-0 align-middle">
+                  <thead>
+                    <tr>
+                      <th style={{ width: "30%" }}>Item Details</th>
+                      <th>Barcode</th>
+                      <th>Category</th>
+                      <th className="text-end">Value</th>
+                      <th className="text-end">On Hand</th>
+                      <th className="text-center">Procurement</th>
+                      <th className="text-center" style={{ width: "120px" }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((item) => {
+                      const stock = totalStock(item.id);
+                      const isLowStock = stock < (item.maxStockLevel || 1000);
+                      const isCritical = stock < 5;
+                      
+                      return (
+                        <tr key={item.id} className={isLowStock ? "table-warning" : ""}> 
+                          <td>
+                            <div className="d-flex flex-column">
+                              <span className="fw-bold text-dark font-monospace">{item.itemCode}</span>
+                              <span className="erp-text-muted text-truncate" style={{ maxWidth: "250px" }} title={item.description}>
+                                {item.description}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="font-monospace text-muted">{item.barcode || '---'}</td>
+                          <td>{item.category}</td>
+                          <td className="text-end font-monospace">{Number(item.price).toFixed(2)}</td>
+                          <td className={`text-end fw-bold font-monospace ${isCritical ? 'text-danger' : 'text-dark'}`}>{stock}</td>
+                          <td className="small text-center">
+                            {poMap[item.id] > 0 ? (
+                              <span className="text-primary fw-bold">In Transit: {poMap[item.id]}</span>
+                            ) : isLowStock ? (
+                              <button className="erp-btn btn btn-sm btn-warning text-dark py-0" onClick={() => createPoForItem(item)}>Draft PO</button>
+                            ) : (
+                              <span className="text-success">Optimal</span>
+                            )}
+                          </td>
+                          <td className="text-center">
+                            <div className="btn-group shadow-sm">
+                              <button className="erp-btn btn btn-light btn-sm border" onClick={() => setDetailItem(item)}>View</button>
+                              <button className="erp-btn btn btn-light btn-sm border" onClick={() => {
+                                setDetailItem(item);
+                                setIsEditingProduct(true);
+                              }}>Edit</button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
-      {cameraError && <div className="alert alert-danger py-2 small fw-bold">⚠️ {cameraError}</div>}
-
-      {/* MANUAL INPUT */}
-      <form onSubmit={handleManualSubmit} className="d-flex gap-2 mb-3">
-        <input type="text" className="form-control erp-input font-monospace" placeholder="Manual barcode entry..." value={manualInput} onChange={(e) => setManualInput(e.target.value)} />
-        <button type="submit" className="btn btn-primary erp-btn px-4" disabled={!manualInput}>Lookup</button>
-      </form>
-
-      {/* STATUS NOTIFICATIONS */}
-      {status.text && (
-        <div className={`alert erp-alert py-2 fw-bold ${getAlertClass(status.type)}`}>
-          {status.text}
-        </div>
-      )}
-
-      {/* DETECTED ITEM CARD */}
-      {currentItem && (
-        <div className="alert alert-success d-flex flex-column mb-3 py-2 border-success shadow-sm">
-          <div className="d-flex justify-content-between align-items-center">
-             <span className="fw-bold font-monospace fs-5">{currentItem.itemCode}</span>
-             <button className="btn btn-sm btn-outline-danger erp-btn py-0 px-2" onClick={() => { resetScanState(); void startCamera(); }}>Clear</button>
-          </div>
-          <span className="small text-dark mt-1">{currentItem.description}</span>
-          {activeTab === 'po' && currentPoLine && (
-            <div className="mt-2 pt-2 border-top border-success d-flex justify-content-between small fw-bold">
-              <span>PO Line Matched</span>
-              <span>Pending: {currentPoLine.pendingQty}</span>
+      {/* ============================================================ */}
+      {/* UNIVERSAL SERIAL GENERATION MODAL                            */}
+      {/* ============================================================ */}
+      {showSerialModal && (
+        <div className="erp-modal-overlay" style={{ zIndex: 1060 }}>
+          <div className="erp-dialog erp-dialog-md">
+            <div className="erp-dialog-header">
+              <h6 className="m-0 fw-bold">Serial Number Allocation</h6>
+              <button className="btn-close btn-close-white" onClick={() => setShowSerialModal(false)}></button>
             </div>
-          )}
-        </div>
-      )}
-
-      {/* TOP NAVIGATION TABS */}
-      <ul className="nav nav-tabs mb-3 border-bottom-0">
-        <li className="nav-item">
-          <button className={`nav-link fw-bold ${activeTab === 'stock' ? 'active bg-light border-bottom-0 text-primary' : 'text-muted'}`} onClick={() => { setActiveTab('stock'); resetScanState(); void startCamera(); }}>
-            📦 Stock Ops
-          </button>
-        </li>
-        <li className="nav-item">
-          <button className={`nav-link fw-bold ${activeTab === 'po' ? 'active bg-light border-bottom-0 text-primary' : 'text-muted'}`} onClick={() => { setActiveTab('po'); resetScanState(); void startCamera(); }}>
-            🛒 PO Receiving
-          </button>
-        </li>
-      </ul>
-
-      {/* ========================================= */}
-      {/* TAB 1: STOCK OPERATIONS (IN/OUT/TRANSFER) */}
-      {/* ========================================= */}
-      {activeTab === 'stock' && (
-        <div className="erp-panel shadow-sm flex-grow-1 d-flex flex-column bg-light border-top-0 rounded-top-0">
-          <div className="p-3 bg-white flex-grow-1 d-flex flex-column rounded-bottom">
-            
-            <div className="btn-group w-100 mb-3 shadow-sm" role="group">
-              <button type="button" className={`btn erp-btn ${txMode === 'in' ? 'btn-success fw-bold' : 'btn-light border'}`} onClick={() => { setTxMode('in'); setTxForm(p => ({...p, lotId: '', destWarehouseId: ''})); }}>📥 IN</button>
-              <button type="button" className={`btn erp-btn ${txMode === 'out' ? 'btn-danger fw-bold' : 'btn-light border'}`} onClick={() => { setTxMode('out'); setTxForm(p => ({...p, lotNumber: '', destWarehouseId: ''})); }}>📤 OUT</button>
-              <button type="button" className={`btn erp-btn ${txMode === 'transfer' ? 'btn-warning fw-bold' : 'btn-light border'}`} onClick={() => { setTxMode('transfer'); setTxForm(p => ({...p, lotNumber: ''})); }}>🔁 XFER</button>
-            </div>
-
-            <fieldset disabled={!currentItem}>
-              <form onSubmit={(e) => e.preventDefault()}>
-                <div className="row g-2 mb-3">
-                  <div className="col-12">
-                    <label className="erp-label">Location <span className="text-danger">*</span></label>
-                    <select className="form-select erp-input" value={txForm.warehouseId} onChange={(e) => setTxForm({ ...txForm, warehouseId: e.target.value })}>
-                      {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-                    </select>
-                  </div>
+            <div className="erp-dialog-body">
+              <div className="d-flex justify-content-between align-items-center mb-3 p-3 bg-light border rounded">
+                <div>
+                  <span className="erp-label m-0">Target Qty</span>
+                  <span className="fs-5 fw-bold font-monospace text-primary">{serialGenerationForm.quantity}</span>
                 </div>
+                <button className="btn btn-sm btn-outline-primary fw-bold erp-btn" onClick={generateSerialNumbers}>
+                  + Generate Sequence
+                </button>
+              </div>
 
-                <div className="row g-2 mb-3">
-                  <div className="col-4">
-                    <label className="erp-label">Qty <span className="text-danger">*</span></label>
-                    <input type="number" className="form-control erp-input font-monospace text-end fw-bold" value={txForm.quantity} onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })} min="1" placeholder="0" />
-                  </div>
-
-                  {txMode === 'in' ? (
-                    <div className="col-8">
-                      <label className="erp-label">Lot / Batch Number</label>
-                      <input 
-                        type="text" 
-                        className="form-control erp-input font-monospace" 
-                        value={txForm.lotNumber} 
-                        onChange={(e) => setTxForm({ ...txForm, lotNumber: e.target.value })} 
-                        placeholder="Type lot code..." 
-                      />
-                    </div>
-                  ) : (
-                    <div className="col-8">
-                      <label className="erp-label">Source Lot <span className="text-danger">*</span></label>
-                      <select className="form-select erp-input font-monospace" value={txForm.lotId} onChange={(e) => setTxForm({ ...txForm, lotId: e.target.value })}>
-                        <option value="">{lotsLoading ? 'Loading...' : '-- Select --'}</option>
-                        {availableLots.filter(l => l.quantity > 0).map((lot) => (
-                          <option key={`${lot.lotId}-${lot.lotNumber}`} value={lot.lotId}>
-                            {lot.lotNumber} (Avail: {lot.quantity})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
+              {serialGenerationForm.generatedSerials.length > 0 ? (
+                <div className="border rounded overflow-hidden" style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                  <table className="table table-sm table-striped m-0 font-monospace" style={{ fontSize: '0.8rem' }}>
+                    <thead className="table-light sticky-top">
+                      <tr>
+                        <th className="ps-3 text-uppercase text-muted">S/N</th>
+                        <th className="text-uppercase text-muted">Generated Identifier</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {serialGenerationForm.generatedSerials.map((s, i) => (
+                        <tr key={i}>
+                          <td className="ps-3 text-muted">{i + 1}</td>
+                          <td className="fw-bold">{s.serialNumber}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-
-                {txMode === 'transfer' && (
-                  <div className="row g-2 mb-3 p-2 bg-light border rounded">
-                    <div className="col-12">
-                      <label className="erp-label text-warning">Dest Location <span className="text-danger">*</span></label>
-                      <select className="form-select erp-input" value={txForm.destWarehouseId} onChange={(e) => setTxForm({ ...txForm, destWarehouseId: e.target.value })}>
-                        <option value="">-- Target Bin --</option>
-                        {warehouses.filter((w) => w.id !== parseInt(txForm.warehouseId, 10)).map((w) => (
-                          <option key={w.id} value={w.id}>{w.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                )}
-
-                <div className="d-flex pt-3 border-top mt-auto">
-                  <button type="button" onClick={handleStockTransaction} disabled={loading || !txForm.itemId || !txForm.quantity} className={`btn erp-btn w-100 py-2 fw-bold ${txMode === 'in' ? 'btn-success' : txMode === 'out' ? 'btn-danger' : 'btn-warning text-dark'}`}>
-                    {loading ? 'PROCESSING...' : txMode === 'in' ? 'EXECUTE RECEIPT' : txMode === 'out' ? 'EXECUTE DISPATCH' : 'EXECUTE TRANSFER'}
-                  </button>
-                </div>
-              </form>
-            </fieldset>
-            {!currentItem && <div className="text-center text-muted small mt-3 p-2 border border-dashed rounded">Scan an item to unlock transaction controls.</div>}
-          </div>
-        </div>
-      )}
-
-      {/* ========================================= */}
-      {/* TAB 2: PO RECEIVING */}
-      {/* ========================================= */}
-      {activeTab === 'po' && (
-        <div className="erp-panel shadow-sm flex-grow-1 d-flex flex-column bg-light border-top-0 rounded-top-0">
-          <div className="p-3 bg-white flex-grow-1 d-flex flex-column rounded-bottom">
-            
-            <div className="mb-4">
-              <label className="erp-label m-0 mb-2">Target Purchase Order</label>
-              <select className="form-select erp-input font-monospace mb-2" value={selectedPoNumber} onChange={(e) => { setSelectedPoNumber(e.target.value); setCurrentPoLine(null); }}>
-                <option value="">-- Select PO --</option>
-                {filteredPoList.map((po) => (
-                  <option key={po.poNumber} value={po.poNumber}>{po.poNumber} (Pending: {po.totalPending})</option>
-                ))}
-              </select>
-              {selectedPo && (
-                <div className="d-flex justify-content-between bg-light p-2 border rounded small text-muted">
-                  <span>Vendor:</span><span className="fw-bold text-dark">{selectedPo.supplierName}</span>
+              ) : (
+                <div className="text-center py-4 text-muted small border rounded bg-white">
+                  Click generate to create unique serials based on item prefix.
                 </div>
               )}
             </div>
-
-            <fieldset disabled={!currentItem || !currentPoLine}>
-              <form onSubmit={(e) => e.preventDefault()}>
-                <div className="row g-2 mb-3">
-                  <div className="col-12">
-                    <label className="erp-label">Receive Location</label>
-                    <select className="form-select erp-input" value={txForm.warehouseId} onChange={(e) => setTxForm({ ...txForm, warehouseId: e.target.value })}>
-                      {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div className="row g-2 mb-3">
-                  <div className="col-4">
-                    <label className="erp-label">Qty <span className="text-danger">*</span></label>
-                    <input type="number" className="form-control erp-input font-monospace text-end fw-bold" value={txForm.quantity} onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })} min="1" placeholder="0" />
-                  </div>
-                  <div className="col-8">
-                    <label className="erp-label">Assign Lot Number</label>
-                    <input type="text" className="form-control erp-input font-monospace" value={txForm.lotNumber} onChange={(e) => setTxForm({ ...txForm, lotNumber: e.target.value })} placeholder="Type custom lot..." />
-                  </div>
-                </div>
-                <div className="d-flex pt-3 border-top mt-auto">
-                  <button type="button" onClick={handleStockTransaction} disabled={loading || !txForm.quantity || !currentPoLine} className="btn btn-primary erp-btn w-100 py-2 fw-bold">
-                    {loading ? 'PROCESSING...' : 'RECEIVE PO STOCK'}
-                  </button>
-                </div>
-              </form>
-            </fieldset>
-            {!currentItem && <div className="text-center text-muted small mt-3 p-2 border border-dashed rounded">Scan an item to match against pending PO lines.</div>}
+            <div className="p-3 bg-light border-top d-flex justify-content-end gap-2">
+              <button className="btn btn-light border erp-btn" onClick={() => setShowSerialModal(false)}>Cancel</button>
+              <button 
+                className="btn btn-primary erp-btn px-4" 
+                onClick={() => {
+                  setShowSerialModal(false);
+                  executeTransaction(); // Triggers the actual transaction after confirming serials
+                }}
+                disabled={serialGenerationForm.generatedSerials.length === 0}
+              >
+                Commit & Execute TX
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* ========================================= */}
-      {/* 404 INTERCEPT: ON-THE-FLY ITEM CREATION   */}
-      {/* ========================================= */}
+
+      {/* ITEM MASTER DETAILS DIALOG */}
+      {detailItem && (
+        <div className="erp-modal-overlay">
+          <div className="erp-dialog erp-dialog-lg">
+            <div className="erp-dialog-header d-flex justify-content-between align-items-center">
+              <div>
+                <h5 className="m-0 fw-bold">{detailItem.itemCode}</h5>
+                <small className="opacity-75">{detailItem.description}</small>
+              </div>
+              <div className="d-flex gap-2 align-items-center">
+                <button className="erp-btn btn btn-sm btn-outline-light" type="button" onClick={() => setIsEditingProduct((prev) => !prev)}>
+                  {isEditingProduct ? "Cancel Edit" : "Modify Master Data"}
+                </button>
+                <button className="btn-close btn-close-white ms-2" onClick={() => setDetailItem(null)}></button>
+              </div>
+            </div>
+            
+            <div className="erp-dialog-body p-0">
+              <div className="row g-0">
+                <div className="col-md-8 p-4 border-end">
+                  <h6 className="erp-section-title mb-3">Master Parameters</h6>
+                  <div className="row g-3 mb-4">
+                    <div className="col-sm-4"><div className="erp-meta-label">Barcode</div><div className="erp-meta-value font-monospace">{detailItem.barcode || 'N/A'}</div></div>
+                    <div className="col-sm-4"><div className="erp-meta-label">Item Type</div><div className="erp-meta-value">{detailItem.itemType || 'N/A'}</div></div>
+                    <div className="col-sm-4"><div className="erp-meta-label">Category</div><div className="erp-meta-value">{detailItem.category || 'N/A'}</div></div>
+                    
+                    <div className="col-sm-4"><div className="erp-meta-label">Serial Prefix</div><div className="erp-meta-value font-monospace">{detailItem.serialPrefix || 'N/A'}</div></div>
+                    <div className="col-sm-4"><div className="erp-meta-label">Max Stock Level</div><div className="erp-meta-value">{detailItem.maxStockLevel}</div></div>
+                    <div className="col-sm-4"><div className="erp-meta-label">Safety Stock</div><div className="erp-meta-value">{detailItem.safetyStock}</div></div>
+                    
+                    <div className="col-sm-4"><div className="erp-meta-label">Lead Time</div><div className="erp-meta-value">{detailItem.leadTimeDays} days</div></div>
+                    <div className="col-sm-4"><div className="erp-meta-label">Avg Daily Sales</div><div className="erp-meta-value">{detailItem.averageDailySales}</div></div>
+                    <div className="col-sm-4"><div className="erp-meta-label">Base Unit</div><div className="erp-meta-value">{detailItem.unit || detailItem.UOM}</div></div>
+                  </div>
+
+                  {isEditingProduct && editForm && (
+                    <div className="erp-edit-box mt-4">
+                      <h6 className="erp-section-title">Edit Master Data</h6>
+                      <form onSubmit={handleEditSubmit}>
+                        <div className="row g-2 mb-2">
+                          <div className="col-md-4">
+                            <label className="erp-label">Item Code</label>
+                            <input className="form-control erp-input" value={editForm.itemCode} onChange={(e) => setEditForm((prev) => prev ? { ...prev, itemCode: e.target.value } : prev)} required />
+                          </div>
+                          <div className="col-md-4">
+                            <label className="erp-label">Description</label>
+                            <input className="form-control erp-input" value={editForm.description} onChange={(e) => setEditForm((prev) => prev ? { ...prev, description: e.target.value } : prev)} required />
+                          </div>
+                          <div className="col-md-4">
+                            <label className="erp-label">Barcode</label>
+                            <input className="form-control erp-input" value={editForm.barcode} onChange={(e) => setEditForm((prev) => prev ? { ...prev, barcode: e.target.value } : prev)} />
+                          </div>
+                        </div>
+                        <div className="row g-2 mb-2">
+                          <div className="col-md-3">
+                            <label className="erp-label">Category</label>
+                            <input className="form-control erp-input" value={editForm.category} onChange={(e) => setEditForm((prev) => prev ? { ...prev, category: e.target.value } : prev)} />
+                          </div>
+                          <div className="col-md-3">
+                            <label className="erp-label">Unit</label>
+                            <input className="form-control erp-input" value={editForm.unit} onChange={(e) => setEditForm((prev) => prev ? { ...prev, unit: e.target.value } : prev)} />
+                          </div>
+                          <div className="col-md-3">
+                            <label className="erp-label">Unit Price</label>
+                            <input type="number" step="0.01" className="form-control erp-input text-end" value={editForm.price} onChange={(e) => setEditForm((prev) => prev ? { ...prev, price: e.target.value } : prev)} />
+                          </div>
+                          <div className="col-md-3">
+                            <label className="erp-label">Default Bin</label>
+                            <input className="form-control erp-input" value={editForm.warehouseLocation} onChange={(e) => setEditForm((prev) => prev ? { ...prev, warehouseLocation: e.target.value } : prev)} />
+                          </div>
+                        </div>
+                        <div className="row g-2 mb-3 align-items-end">
+                          <div className="col-md-4">
+                            <label className="erp-label">Serial Prefix</label>
+                            <input className="form-control erp-input font-monospace" value={editForm.serialPrefix} onChange={(e) => setEditForm((prev) => prev ? { ...prev, serialPrefix: e.target.value } : prev)} />
+                          </div>
+                          <div className="col-md-4 pb-1">
+                            <div className="form-check form-switch">
+                              <input className="form-check-input" type="checkbox" id="lotTrackCheck" checked={editForm.isLotTracked} onChange={(e) => setEditForm((prev) => prev ? { ...prev, isLotTracked: e.target.checked } : prev)} />
+                              <label className="form-check-label erp-label mt-1" htmlFor="lotTrackCheck">Require Lot Tracking</label>
+                            </div>
+                          </div>
+                          <div className="col-md-4 text-end">
+                            <button type="submit" className="erp-btn btn btn-primary w-100">Commit Changes</button>
+                          </div>
+                        </div>
+                      </form>
+                    </div>
+                  )}
+                </div>
+                
+                <div className="col-md-4 bg-light p-4">
+                  <div className="d-flex flex-column gap-3 mb-4">
+                    <div className="erp-kpi-box">
+                      <span className="erp-kpi-label">Global On-Hand Stock</span>
+                      <span className="erp-kpi-value text-primary">{totalStock(detailItem.id)}</span>
+                    </div>
+                  </div>
+                  <h6 className="erp-section-title">Storage Locations & Lots</h6>
+                  <div className="erp-lot-list">
+                    {detailInventoryRows.length === 0 ? (
+                      <div className="text-muted small text-center py-4 border rounded bg-white">No active lots or storage data</div>
+                    ) : (
+                      detailInventoryRows.map((row) => (
+                        <div key={row.id} className="erp-lot-row">
+                          <div>
+                            <div className="fw-bold font-monospace text-dark">{row.lotNumber || "UNASSIGNED"}</div>
+                            <div className="erp-text-muted small">{row.warehouseName || "Unknown Location"}</div>
+                          </div>
+                          <div className="fw-bold fs-5 text-dark font-monospace">{row.quantity}</div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CREATE SKU MODAL (Can be opened manually or via 404 Intercept) */}
       {showCreateForm && (
         <div className="erp-modal-overlay" style={{ zIndex: 1100 }}>
-          <div className="erp-dialog erp-dialog-md w-100 m-3 shadow-lg">
+          <div className="erp-dialog erp-dialog-md">
             <div className="erp-dialog-header">
-              <h6 className="m-0 fw-bold">Unrecognized Barcode Detected</h6>
-              <button className="btn-close btn-close-white" onClick={() => { setShowCreateForm(false); void startCamera(); }}></button>
+              <h5 className="m-0 fw-bold">Item Master Registration</h5>
+              <button className="btn-close btn-close-white" onClick={() => setShowCreateForm(false)}></button>
             </div>
-            <div className="erp-dialog-body bg-white p-4">
+            <div className="erp-dialog-body bg-white">
               <form onSubmit={handleCreateProduct}>
-                <div className="alert alert-warning py-2 small fw-bold mb-4 border-warning">
-                  Barcode <span className="font-monospace text-dark">{productForm.barcode}</span> is not in the system. Register it to continue scanning.
+                
+                {/* Visual hint if we arrived here from a 404 barcode scan */}
+                {productForm.barcode && (
+                  <div className="alert alert-warning py-2 small fw-bold mb-3 border-warning">
+                    Barcode <span className="font-monospace text-dark">{productForm.barcode}</span> not found. Registering new item.
+                  </div>
+                )}
+
+                <div className="row g-3 mb-3">
+                  <div className="col-md-6">
+                    <label className="erp-label">Item Code <span className="text-danger">*</span></label>
+                    <input className="form-control erp-input font-monospace" placeholder="e.g. RM-1001" value={productForm.itemCode} onChange={(e) => setProductForm({ ...productForm, itemCode: e.target.value })} required />
+                  </div>
+                  <div className="col-md-6">
+                    <label className="erp-label">Barcode</label>
+                    <input className="form-control erp-input font-monospace" placeholder="Scan..." value={productForm.barcode} onChange={(e) => handleBarcodeChange(e.target.value)} />
+                  </div>
                 </div>
                 
                 <div className="mb-3">
-                  <label className="erp-label">Item Code <span className="text-danger">*</span></label>
-                  <input className="form-control erp-input font-monospace" placeholder="e.g. SKU-001" value={productForm.itemCode} onChange={(e) => setProductForm({ ...productForm, itemCode: e.target.value })} required />
-                </div>
-                <div className="mb-3">
-                  <label className="erp-label">Description <span className="text-danger">*</span></label>
+                  <label className="erp-label">Item Description <span className="text-danger">*</span></label>
                   <textarea className="form-control erp-input" rows="2" value={productForm.description} onChange={(e) => setProductForm({ ...productForm, description: e.target.value })} required />
                 </div>
 
-                <div className="row g-2 mb-4">
-                  <div className="col-6">
-                    <label className="erp-label">Unit Price</label>
-                    <input type="number" step="0.01" className="form-control erp-input font-monospace" value={productForm.price} onChange={(e) => setProductForm({ ...productForm, price: Number(e.target.value) })} />
-                  </div>
-                  <div className="col-6">
+                <div className="row g-3 mb-3">
+                  <div className="col-md-6">
                     <label className="erp-label">Category</label>
                     <input className="form-control erp-input" placeholder="General" value={productForm.category} onChange={(e) => setProductForm({ ...productForm, category: e.target.value })} />
                   </div>
+                  <div className="col-md-6">
+                    <label className="erp-label">Unit Price</label>
+                    <input type="number" step="0.01" className="form-control erp-input text-end" value={productForm.price} onChange={(e) => setProductForm({ ...productForm, price: Number(e.target.value) })} />
+                  </div>
                 </div>
 
-                <div className="d-flex justify-content-end gap-2 pt-3 border-top mt-3">
-                  <button type="button" className="btn btn-light border erp-btn" onClick={() => { setShowCreateForm(false); void startCamera(); }}>Cancel</button>
-                  <button type="submit" className="btn btn-primary erp-btn px-4 fw-bold" disabled={createLoading}>
-                    {createLoading ? 'Saving...' : 'Register & Resume'}
-                  </button>
+                <div className="d-flex justify-content-between align-items-center bg-light p-3 border rounded mt-2">
+                  <div className="d-flex gap-4">
+                    <div className="form-check form-switch mt-1">
+                      <input className="form-check-input" type="checkbox" id="createLotTrack" checked={productForm.isLotTracked} onChange={(e) => setProductForm({ ...productForm, isLotTracked: e.target.checked })} />
+                      <label className="form-check-label erp-label m-0" htmlFor="createLotTrack">Enable Lot Tracking</label>
+                    </div>
+                  </div>
+                  <div className="d-flex gap-2">
+                    <button type="button" className="btn btn-light border erp-btn" onClick={() => setShowCreateForm(false)}>Discard</button>
+                    <button type="submit" className="btn btn-primary erp-btn fw-bold">Create Item Master</button>
+                  </div>
                 </div>
               </form>
             </div>
           </div>
         </div>
       )}
+
+      {/* AI FAB */}
+      <div onClick={() => navigate('/local-ai')} className="ai-fab shadow-lg">
+        <span className="fw-bold">AI</span>
+      </div>
 
       <style>{`
         /* --- ERP THEME CSS --- */
         :root {
-          --erp-primary: #0f4c81;
+          --erp-primary: #0f4c81; 
           --erp-bg: #eef2f5;
           --erp-surface: #ffffff;
           --erp-border: #cfd8dc;
           --erp-text-main: #263238;
           --erp-text-muted: #607d8b;
         }
+
+        .erp-app-wrapper {
+          background-color: var(--erp-bg);
+          color: var(--erp-text-main);
+          font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+          font-size: 0.85rem; 
+        }
+
+        .erp-text-muted { color: var(--erp-text-muted) !important; }
         
+        .erp-topbar {
+          background-color: #1a252f;
+          height: 48px;
+          border-bottom: 3px solid var(--erp-primary);
+        }
+        .erp-status-dot {
+          width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+        }
+
+        /* Panels and Cards */
         .erp-panel {
           background: var(--erp-surface);
           border: 1px solid var(--erp-border);
           border-radius: 4px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.02);
           overflow: hidden;
         }
         .erp-panel-header {
+          background-color: #f8f9fa;
           border-bottom: 1px solid var(--erp-border);
-          padding: 10px 12px;
-          font-size: 0.85rem;
+          padding: 10px 16px;
+          font-weight: 600;
+          color: #34495e;
+          font-size: 0.9rem;
           text-transform: uppercase;
           letter-spacing: 0.5px;
-          color: #34495e;
-          font-weight: bold;
         }
 
+        /* Typography & Labels */
+        .erp-label {
+          font-size: 0.75rem;
+          font-weight: 600;
+          color: var(--erp-text-muted);
+          text-transform: uppercase;
+          margin-bottom: 4px;
+          display: block;
+        }
+        .erp-section-title {
+          font-size: 0.75rem;
+          font-weight: 700;
+          color: #90a4ae;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          border-bottom: 1px solid var(--erp-border);
+          padding-bottom: 4px;
+          margin-bottom: 12px;
+        }
+
+        /* Inputs & Buttons */
         .erp-input {
           border-radius: 3px;
           border-color: #b0bec5;
@@ -3827,45 +4088,37 @@ export default function MobileScanner({
         }
         .erp-btn {
           border-radius: 3px;
-          font-weight: 600;
+          font-weight: 500;
           letter-spacing: 0.2px;
-          font-size: 0.85rem;
+          padding: 6px 12px;
+        }
+
+        /* Data Table */
+        .erp-table-container::-webkit-scrollbar { width: 8px; height: 8px; }
+        .erp-table-container::-webkit-scrollbar-thumb { background: #b0bec5; border-radius: 4px; }
+        .erp-table-container::-webkit-scrollbar-track { background: #eceff1; }
+        
+        .erp-table { font-size: 0.8rem; }
+        .erp-table thead th {
+          background-color: #eceff1;
+          color: #455a64;
+          font-weight: 600;
+          text-transform: uppercase;
+          font-size: 0.75rem;
+          position: sticky;
+          top: 0;
+          z-index: 10;
+          border-bottom: 2px solid #cfd8dc;
           padding: 8px 12px;
         }
-        .erp-label {
-          font-size: 0.7rem;
-          font-weight: 700;
-          color: var(--erp-text-muted);
-          text-transform: uppercase;
-          margin-bottom: 4px;
-          display: block;
+        .erp-table tbody td {
+          padding: 8px 12px;
+          vertical-align: middle;
+          border-color: #eceff1;
         }
+        .table-warning { background-color: #fff8e1 !important; }
 
-        /* Tabs customization */
-        .nav-tabs .nav-link {
-          border-radius: 4px 4px 0 0;
-          border-color: transparent transparent var(--erp-border);
-        }
-        .nav-tabs .nav-link.active {
-          border-color: var(--erp-border) var(--erp-border) transparent;
-        }
-
-        /* Scanner Specific Animations */
-        .scanner-laser {
-          animation: scan 2s infinite linear;
-        }
-        @keyframes scan {
-          0% { transform: translateY(-80px); }
-          50% { transform: translateY(80px); }
-          100% { transform: translateY(-80px); }
-        }
-        
-        .erp-alert {
-          border-radius: 4px;
-          box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        }
-        
-        /* Modals */
+        /* Modals / Dialogs */
         .erp-modal-overlay {
           position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
           background: rgba(38, 50, 56, 0.6);
@@ -3881,19 +4134,51 @@ export default function MobileScanner({
           display: flex;
           flex-direction: column;
           overflow: hidden;
-          animation: modalFadeIn 0.2s ease-out;
         }
-        @keyframes modalFadeIn {
-          from { opacity: 0; transform: translateY(-10px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .erp-dialog-md { max-width: 450px; }
+        .erp-dialog-md { max-width: 500px; }
+        .erp-dialog-lg { max-width: 900px; }
         .erp-dialog-header {
           background-color: var(--erp-primary);
           color: white;
-          padding: 12px 16px;
+          padding: 12px 20px;
           display: flex; justify-content: space-between; align-items: center;
         }
+        .erp-dialog-body {
+          padding: 20px;
+          overflow-y: auto;
+        }
+
+        /* KPIs & Detail Meta */
+        .erp-meta-label { font-size: 0.7rem; text-transform: uppercase; color: var(--erp-text-muted); font-weight: 600; }
+        .erp-meta-value { font-size: 0.9rem; font-weight: 500; color: #212529; }
+        .erp-edit-box { background: #f8f9fa; border: 1px dashed #b0bec5; padding: 16px; border-radius: 4px; }
+        
+        .erp-kpi-box {
+          background: white; border: 1px solid var(--erp-border);
+          padding: 12px 16px; border-left: 4px solid var(--erp-primary);
+          border-radius: 3px;
+        }
+        .erp-kpi-label { display: block; font-size: 0.75rem; text-transform: uppercase; color: var(--erp-text-muted); font-weight: 600; }
+        .erp-kpi-value { display: block; font-size: 1.5rem; font-weight: 700; }
+        
+        .erp-lot-list { display: flex; flex-direction: column; gap: 8px; }
+        .erp-lot-row {
+          display: flex; justify-content: space-between; align-items: center;
+          background: white; border: 1px solid var(--erp-border);
+          padding: 8px 12px; border-radius: 3px;
+        }
+
+        /* FAB */
+        .ai-fab {
+          position: fixed; bottom: 30px; right: 30px; width: 50px; height: 50px;
+          background: var(--erp-primary); color: #fff; border-radius: 50%; cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          transition: 0.2s; z-index: 1000; box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+          border: 2px solid white;
+        }
+        .ai-fab:hover { transform: scale(1.05); background: #1565c0; }
+        
+        .erp-alert { border-radius: 3px; font-size: 0.85rem; border: 1px solid transparent; }
       `}</style>
     </div>
   );
