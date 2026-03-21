@@ -1458,7 +1458,7 @@ export default function MobileScanner({
   const codeReaderRef = useRef(null);
   const lastScan = useRef({ barcode: '', timestamp: 0 });
 
-  // Camera & Mode States
+  // Camera & Global States
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const [manualInput, setManualInput] = useState('');
@@ -1469,17 +1469,27 @@ export default function MobileScanner({
   const [loading, setLoading] = useState(false);
   
   // Transaction Protocol States
-  const [txMode, setTxMode] = useState('in'); // 'in', 'out', 'transfer'
-  const defaultWarehouseId = warehouses.length ? String(warehouses[0].id) : '';
+  const [txMode, setTxMode] = useState('in'); // 'in', 'out', 'transfer', 'po'
   const [txForm, setTxForm] = useState({
     itemId: '',
-    warehouseId: defaultWarehouseId,
+    warehouseId: '',
     destWarehouseId: '',
     lotId: '',
     quantity: '',
     lotNumber: ''
   });
 
+  // PO Specific States
+  const [poLoading, setPoLoading] = useState(false);
+  const [poList, setPoList] = useState([]);
+  const [selectedPoNumber, setSelectedPoNumber] = useState('');
+  const [currentPoLine, setCurrentPoLine] = useState(null);
+  const selectedPo = useMemo(
+    () => poList.find((po) => po.poNumber === selectedPoNumber) ?? null,
+    [poList, selectedPoNumber]
+  );
+
+  // Lot Specific States
   const [availableLots, setAvailableLots] = useState([]);
   const [lotsLoading, setLotsLoading] = useState(false);
 
@@ -1525,7 +1535,9 @@ export default function MobileScanner({
     setLastScannedBarcode('');
     setDetectedBarcode('');
     setCurrentItem(null);
-    setTxForm(prev => ({...prev, quantity: '', lotNumber: '', lotId: ''}));
+    setCurrentPoLine(null);
+    setTxForm(prev => ({...prev, itemId: '', quantity: '', lotNumber: '', lotId: '', warehouseId: ''}));
+    setAvailableLots([]);
   }, []);
 
   const scannerItemId = parseInt(txForm.itemId, 10);
@@ -1554,10 +1566,44 @@ export default function MobileScanner({
     }
   }, [scannerItemId, scannerWarehouseId]);
 
+  // Auto-select lot when lots are loaded for OUT or TRANSFER
+  useEffect(() => {
+    if (availableLots.length > 0 && (txMode === 'out' || txMode === 'transfer')) {
+      const validLot = availableLots.find(l => l.quantity > 0);
+      if (validLot && !txForm.lotId) {
+        setTxForm(prev => ({ ...prev, lotId: String(validLot.lotId) }));
+      }
+    }
+  }, [availableLots, txMode, txForm.lotId]);
+
   useEffect(() => {
     loadAvailableLots();
-    setTxForm((prev) => ({ ...prev, lotId: '' }));
   }, [loadAvailableLots]);
+
+  const loadPendingPurchaseOrders = useCallback(async () => {
+    setPoLoading(true);
+    try {
+      const response = await api.get('/purchase-orders/pending');
+      const list = response.data || [];
+      setPoList(list);
+      const hasSelection = selectedPoNumber && list.some((po) => po.poNumber === selectedPoNumber);
+      if (!hasSelection) {
+        setSelectedPoNumber(list[0]?.poNumber ?? '');
+      }
+    } catch (error) {
+      setPoList([]);
+      setSelectedPoNumber('');
+    } finally {
+      setPoLoading(false);
+    }
+  }, [selectedPoNumber]);
+
+  // Load POs if we switch to PO mode
+  useEffect(() => {
+    if (txMode === 'po') {
+      void loadPendingPurchaseOrders();
+    }
+  }, [txMode, loadPendingPurchaseOrders]);
 
   const stopCamera = useCallback(() => {
     try {
@@ -1574,13 +1620,16 @@ export default function MobileScanner({
       if (!trimmed) return null;
       
       setCurrentItem(null);
+      setCurrentPoLine(null);
       setDetectedBarcode(trimmed);
       let allowScanRecording = true;
       
       try {
         const response = await api.get(`/items/barcode/${encodeURIComponent(trimmed)}`);
         const payload = response.data;
-        const assignedWarehouseId = payload.inventory?.warehouseId ?? warehouses[0]?.id ?? '';
+        
+        // Auto-detect Warehouse from inventory payload, fallback to first available
+        const autoWarehouseId = payload.inventory?.warehouseId ?? warehouses[0]?.id ?? '';
         
         setCurrentItem({
           itemId: payload.itemId,
@@ -1592,22 +1641,43 @@ export default function MobileScanner({
         setTxForm((prev) => ({
           ...prev,
           itemId: String(payload.itemId),
-          warehouseId: prev.warehouseId || (assignedWarehouseId ? String(assignedWarehouseId) : '')
+          warehouseId: String(autoWarehouseId),
+          lotId: payload.inventory?.lotId ? String(payload.inventory.lotId) : prev.lotId
         }));
 
+        // Handle PO Mode Specific Validations
+        if (txMode === 'po') {
+          if (!selectedPo) {
+            showStatus('warning', 'Select a PO before scanning items.');
+            allowScanRecording = false;
+          } else {
+            const match = selectedPo.lines.find((line) => line.itemId === payload.itemId);
+            if (!match) {
+              showStatus('error', `${payload.itemCode} is not part of PO ${selectedPo.poNumber}`);
+              allowScanRecording = false;
+            } else {
+              setCurrentPoLine(match);
+              setTxForm((prev) => ({ ...prev, warehouseId: String(match.warehouseId) }));
+              showStatus('info', `PO Matched: Pending ${match.pendingQty}`);
+            }
+          }
+        } else {
+          const statusType = payload.isNew ? 'info' : 'success';
+          const statusMessage = payload.isNew 
+            ? `New item created (${payload.itemCode})` 
+            : `Detected: ${payload.itemCode} at Location`;
+          showStatus(statusType, statusMessage);
+        }
+        
         onScanDetected({
           itemId: payload.itemId,
-          warehouseId: assignedWarehouseId,
+          warehouseId: autoWarehouseId,
           lotId: payload.inventory?.lotId ?? null,
           lotNumber: payload.inventory?.lotNumber ?? ''
         });
         
-        const statusType = payload.isNew ? 'info' : 'success';
-        const statusMessage = payload.isNew
-          ? `New item auto-created (${payload.itemCode})`
-          : `Scanned: ${payload.itemCode}`;
-          
-        showStatus(statusType, statusMessage);
+        stopCamera();
+        fetchData();
         
         if (allowScanRecording) {
           recordBarcodeScan(trimmed);
@@ -1615,16 +1685,11 @@ export default function MobileScanner({
         return payload;
       } catch (err) {
         console.error('Barcode lookup failed', err);
-        const status = err?.response?.status;
-        if (status === 404) {
-          showStatus('error', 'Item not found');
-        } else {
-          showStatus('error', 'Failed to resolve barcode');
-        }
+        showStatus('error', err?.response?.status === 404 ? 'Item not found in catalog' : 'Failed to resolve barcode');
         return null;
       }
     },
-    [onScanDetected, showStatus, warehouses, recordBarcodeScan]
+    [onScanDetected, showStatus, warehouses, recordBarcodeScan, txMode, selectedPo, stopCamera, fetchData]
   );
 
   const handleDetectedCode = useCallback(async (code) => {
@@ -1639,12 +1704,6 @@ export default function MobileScanner({
       await resolveBarcode(trimmed);
     }
   }, [resolveBarcode]);
-
-  useEffect(() => {
-    if (!txForm.warehouseId && warehouses.length > 0) {
-      setTxForm((prev) => ({ ...prev, warehouseId: String(warehouses[0].id) }));
-    }
-  }, [txForm.warehouseId, warehouses]);
 
   const handleManualSubmit = async (e) => {
     e.preventDefault();
@@ -1670,9 +1729,7 @@ export default function MobileScanner({
           deviceId ?? undefined,
           videoRef.current,
           (result, error) => {
-            if (result) {
-              handleDetectedCode(result.getText());
-            }
+            if (result) handleDetectedCode(result.getText());
             if (error && !(error instanceof NotFoundException)) {
               console.error('Decode error', error);
             }
@@ -1704,8 +1761,10 @@ export default function MobileScanner({
   const handleStockTransaction = async (e) => {
     e?.preventDefault();
     if (!txForm.itemId || !txForm.warehouseId || !txForm.quantity) {
-      return showStatus('error', 'Provide item, warehouse, and quantity');
+      return showStatus('error', 'Provide valid item, warehouse, and quantity');
     }
+
+    const requestedQty = parseFloat(txForm.quantity);
 
     setLoading(true);
     try {
@@ -1713,23 +1772,32 @@ export default function MobileScanner({
       let payload = {
         itemId: parseInt(txForm.itemId, 10),
         warehouseId: parseInt(txForm.warehouseId, 10),
-        quantity: parseFloat(txForm.quantity),
+        quantity: requestedQty,
       };
 
-      if (txMode === 'in') {
+      if (txMode === 'po') {
+        if (!selectedPo || !currentPoLine) return showStatus('error', 'Valid PO and PO Line required');
+        if (requestedQty > currentPoLine.pendingQty) return showStatus('error', 'Quantity exceeds PO pending amount');
+        
+        endpoint = '/purchase-orders/receive';
+        payload.poId = selectedPo.id;
+        payload.lotNumber = txForm.lotNumber?.trim() || `LOT-${Date.now().toString().slice(-6)}`;
+        payload.scannerDeviceId = 'MOBILE-SCAN';
+      } 
+      else if (txMode === 'in') {
         endpoint = '/stock/in';
         payload.lotNumber = txForm.lotNumber?.trim() || null;
         if (serialGenerationForm.generatedSerials.length > 0) {
           payload.serialNumbers = serialGenerationForm.generatedSerials.map(s => s.serialNumber);
         }
-      } else if (txMode === 'out') {
+      } 
+      else if (txMode === 'out') {
         if (!txForm.lotId) return showStatus('error', 'Source lot required for dispatch');
         endpoint = '/stock/out';
         payload.lotId = parseInt(txForm.lotId, 10);
-      } else if (txMode === 'transfer') {
-        if (!txForm.lotId || !txForm.destWarehouseId) {
-          return showStatus('error', 'Lot and Destination Warehouse required for transfer');
-        }
+      } 
+      else if (txMode === 'transfer') {
+        if (!txForm.lotId || !txForm.destWarehouseId) return showStatus('error', 'Lot and Dest Warehouse required');
         endpoint = '/stock/transfer';
         payload.lotId = parseInt(txForm.lotId, 10);
         payload.destinationWarehouseId = parseInt(txForm.destWarehouseId, 10);
@@ -1737,16 +1805,15 @@ export default function MobileScanner({
 
       const response = await api.post(endpoint, payload);
       const message = response.data?.message || `Stock ${txMode.toUpperCase()} recorded`;
-      
       showStatus('success', message);
       
       // Cleanup after success
-      setTxForm(prev => ({ ...prev, itemId: '', quantity: '', lotNumber: '', lotId: '', destWarehouseId: '' }));
+      resetScanState();
       setSerialGenerationForm({ itemId: '', quantity: 0, generatedSerials: [] });
       setShowSerialModal(false);
-      resetScanState();
       fetchData();
-      void loadAvailableLots();
+      if (txMode === 'po') void loadPendingPurchaseOrders();
+      void startCamera();
       
     } catch (err) {
       console.error(`Stock ${txMode} failed`, err);
@@ -1758,7 +1825,7 @@ export default function MobileScanner({
 
   const openSerialGenerationModal = () => {
     if (!txForm.itemId || !txForm.warehouseId || !txForm.quantity || parseFloat(txForm.quantity) <= 0) {
-      return showStatus('error', 'Select item and valid quantity first');
+      return showStatus('error', 'Scan item and enter valid quantity first');
     }
     setSerialGenerationForm({
       itemId: txForm.itemId,
@@ -1787,7 +1854,6 @@ export default function MobileScanner({
     handleStockTransaction();
   };
 
-  // Helper to style status messages
   const getAlertClass = (type) => {
     if (type === 'success') return 'alert-success border-success text-success';
     if (type === 'error') return 'alert-danger border-danger text-danger';
@@ -1832,147 +1898,166 @@ export default function MobileScanner({
         </div>
       )}
 
-      {/* DETECTED ITEM INFO */}
-      {currentItem && (
-        <div className="alert alert-success d-flex flex-column mb-4 py-2 border-success">
-          <div className="d-flex justify-content-between align-items-center">
-             <span className="fw-bold font-monospace fs-5">{currentItem.itemCode}</span>
-             <span className="badge bg-success">Detected</span>
-          </div>
-          <span className="small text-dark mt-1">{currentItem.description}</span>
-        </div>
-      )}
-
       {/* INVENTORY MOVEMENT PROTOCOL */}
       <div className="erp-panel shadow-sm flex-grow-1 d-flex flex-column mb-3">
         <div className="erp-panel-header d-flex justify-content-between align-items-center bg-light">
           <span>Inventory Movement Protocol</span>
         </div>
-        <div className="p-3 bg-white flex-grow-1">
+        <div className="p-3 bg-white flex-grow-1 d-flex flex-column">
           
           {/* MODE SELECTOR */}
-          <div className="btn-group w-100 mb-3 shadow-sm" role="group">
+          <div className="btn-group w-100 mb-3 shadow-sm flex-wrap" role="group">
             <button 
               type="button" 
               className={`btn erp-btn ${txMode === 'in' ? 'btn-success fw-bold' : 'btn-light border'}`}
-              onClick={() => { setTxMode('in'); setTxForm(prev => ({...prev, lotId: '', destWarehouseId: ''})); }}
+              onClick={() => { setTxMode('in'); resetScanState(); }}
             >
-              📥 RECEIVE
+              📥 IN
             </button>
             <button 
               type="button" 
               className={`btn erp-btn ${txMode === 'out' ? 'btn-danger fw-bold' : 'btn-light border'}`}
-              onClick={() => { setTxMode('out'); setTxForm(prev => ({...prev, lotNumber: '', destWarehouseId: ''})); }}
+              onClick={() => { setTxMode('out'); resetScanState(); }}
             >
-              📤 DISPATCH
+              📤 OUT
             </button>
             <button 
               type="button" 
               className={`btn erp-btn ${txMode === 'transfer' ? 'btn-warning fw-bold' : 'btn-light border'}`}
-              onClick={() => { setTxMode('transfer'); setTxForm(prev => ({...prev, lotNumber: ''})); }}
+              onClick={() => { setTxMode('transfer'); resetScanState(); }}
             >
-              🔁 TRANSFER
+              🔁 XFER
+            </button>
+            <button 
+              type="button" 
+              className={`btn erp-btn ${txMode === 'po' ? 'btn-primary fw-bold' : 'btn-light border'}`}
+              onClick={() => { setTxMode('po'); resetScanState(); }}
+            >
+              📦 PO RECV
             </button>
           </div>
 
-          <div className="erp-instruction-box mb-4 p-2 rounded" style={{
-            backgroundColor: txMode === 'in' ? '#f0fdf4' : txMode === 'out' ? '#fef2f2' : '#fffbeb',
-            borderLeft: `4px solid ${txMode === 'in' ? '#22c55e' : txMode === 'out' ? '#ef4444' : '#f59e0b'}`
-          }}>
-            <span className="fw-semibold small text-uppercase" style={{color: '#475569'}}>
-              {txMode === 'in' ? 'Add stock & generate serials' : txMode === 'out' ? 'Dispatch stock from warehouse' : 'Transfer stock between warehouses'}
-            </span>
+          {/* DETECTED ITEM CONTEXT (Replaces Manual Select) */}
+          <div className="mb-3">
+            <label className="erp-label">Detected Item Context</label>
+            {currentItem ? (
+              <div className="p-3 bg-light border border-success rounded d-flex justify-content-between align-items-center shadow-sm">
+                <div>
+                  <div className="fw-bold font-monospace text-dark fs-5">{currentItem.itemCode}</div>
+                  <div className="text-muted small">{currentItem.description}</div>
+                </div>
+                <button className="btn btn-sm btn-outline-danger erp-btn" onClick={resetScanState}>Clear</button>
+              </div>
+            ) : (
+              <div className="p-3 bg-light border border-warning rounded text-center text-muted small shadow-sm">
+                 Please scan a barcode or enter it manually to set the active item context.
+              </div>
+            )}
           </div>
 
-          {/* FORM GRID */}
-          <form onSubmit={(e) => e.preventDefault()}>
-            <div className="row g-2 mb-2">
-              <div className="col-12">
-                <label className="erp-label">Master Item ID <span className="text-danger">*</span></label>
-                <select className="form-select erp-input font-monospace" value={txForm.itemId} onChange={(e) => {
-                   setTxForm({ ...txForm, itemId: e.target.value });
-                   const selected = items.find(i => String(i.id) === String(e.target.value));
-                   if (selected) {
-                     setCurrentItem({ itemCode: selected.itemCode, description: selected.description, serialPrefix: selected.serialPrefix });
-                   } else {
-                     setCurrentItem(null);
-                   }
-                }}>
-                  <option value="">-- Select Product --</option>
-                  {items.map((item) => (
-                    <option key={item.id} value={item.id}>{item.itemCode}</option>
-                  ))}
-                </select>
+          {/* PO CONTEXT (Only visible in PO Mode) */}
+          {txMode === 'po' && (
+            <div className="p-3 mb-3 bg-light border rounded shadow-sm">
+              <div className="d-flex justify-content-between align-items-center mb-2">
+                <label className="erp-label m-0">Target Purchase Order <span className="text-danger">*</span></label>
+                {poLoading && <div className="spinner-border spinner-border-sm text-primary"></div>}
               </div>
-            </div>
-            
-            <div className="row g-2 mb-3">
-              <div className="col-12">
-                <label className="erp-label">Source Warehouse <span className="text-danger">*</span></label>
-                <select className="form-select erp-input" value={txForm.warehouseId} onChange={(e) => setTxForm({ ...txForm, warehouseId: e.target.value })}>
-                  <option value="">-- Select Location --</option>
-                  {warehouses.map((warehouse) => (
-                    <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="row g-2 mb-3">
-              <div className="col-4">
-                <label className="erp-label">Qty <span className="text-danger">*</span></label>
-                <input type="number" className="form-control erp-input font-monospace text-end" value={txForm.quantity} onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })} min="0" placeholder="0" />
-              </div>
-
-              {/* Dynamic Lot Fields based on Mode */}
-              {txMode === 'in' ? (
-                <div className="col-8">
-                  <label className="erp-label">Assign Lot / Batch Number</label>
-                  <input type="text" className="form-control erp-input font-monospace" value={txForm.lotNumber} onChange={(e) => setTxForm({ ...txForm, lotNumber: e.target.value })} placeholder="Optional" />
-                </div>
-              ) : (
-                <div className="col-8">
-                  <label className="erp-label">Select Source Lot <span className="text-danger">*</span></label>
-                  <select className="form-select erp-input font-monospace" value={txForm.lotId} onChange={(e) => setTxForm({ ...txForm, lotId: e.target.value })} disabled={lotsLoading}>
-                    <option value="">{lotsLoading ? 'Loading...' : '-- Choose Active Lot --'}</option>
-                    {availableLots.filter(l => l.quantity > 0).map((lot) => (
-                      <option key={`${lot.lotId}-${lot.lotNumber}`} value={lot.lotId}>
-                        {lot.lotNumber || 'UNASSIGNED'} (Avail: {lot.quantity})
-                      </option>
-                    ))}
-                  </select>
+              <select
+                className="form-select erp-input font-monospace mb-2"
+                value={selectedPoNumber}
+                onChange={(e) => {
+                  setSelectedPoNumber(e.target.value);
+                  setCurrentPoLine(null);
+                }}
+              >
+                <option value="">-- Select Pending PO --</option>
+                {poList.map((po) => (
+                  <option key={po.poNumber} value={po.poNumber}>
+                    {po.poNumber} ({po.totalPending.toFixed(0)} units pending)
+                  </option>
+                ))}
+              </select>
+              
+              {currentPoLine && (
+                <div className="d-flex justify-content-between align-items-center bg-white p-2 border rounded small border-success">
+                  <span className="text-muted fw-bold">Matched PO Line:</span>
+                  <span className="fw-bold text-success">Pending Qty: {currentPoLine.pendingQty}</span>
                 </div>
               )}
             </div>
+          )}
 
-            {/* Transfer specific fields */}
-            {txMode === 'transfer' && (
-              <div className="row g-2 mb-3 p-2 bg-light border rounded">
+          {/* FORM GRID (Enabled only if item is scanned) */}
+          <fieldset disabled={!currentItem}>
+            <form onSubmit={(e) => e.preventDefault()}>
+              <div className="row g-2 mb-3">
                 <div className="col-12">
-                  <label className="erp-label text-warning">Destination Warehouse <span className="text-danger">*</span></label>
-                  <select className="form-select erp-input" value={txForm.destWarehouseId} onChange={(e) => setTxForm({ ...txForm, destWarehouseId: e.target.value })}>
-                    <option value="">-- Select Destination Bin --</option>
-                    {warehouses
-                      .filter((warehouse) => warehouse.id !== parseInt(txForm.warehouseId, 10))
-                      .map((warehouse) => (
-                        <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
-                      ))}
+                  <label className="erp-label">Active Warehouse <span className="text-danger">*</span></label>
+                  <select className="form-select erp-input" value={txForm.warehouseId} onChange={(e) => setTxForm({ ...txForm, warehouseId: e.target.value })} disabled={txMode === 'po'}>
+                    <option value="">-- Select Location --</option>
+                    {warehouses.map((warehouse) => (
+                      <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
+                    ))}
                   </select>
                 </div>
               </div>
-            )}
 
-            <div className="d-flex justify-content-end pt-3 border-top mt-auto">
-              <button
-                type="button"
-                onClick={(e) => (txMode === 'in' ? openSerialGenerationModal() : handleStockTransaction(e))}
-                disabled={loading || !txForm.itemId || !txForm.warehouseId || !txForm.quantity}
-                className={`btn erp-btn w-100 py-2 fw-bold ${txMode === 'in' ? 'btn-success' : txMode === 'out' ? 'btn-danger' : 'btn-warning text-dark'}`}
-              >
-                {loading ? 'PROCESSING...' : txMode === 'in' ? 'RECEIVE & GEN SERIALS' : txMode === 'out' ? 'EXECUTE DISPATCH' : 'EXECUTE TRANSFER'}
-              </button>
-            </div>
-          </form>
+              <div className="row g-2 mb-3">
+                <div className="col-4">
+                  <label className="erp-label">Qty <span className="text-danger">*</span></label>
+                  <input type="number" className="form-control erp-input font-monospace text-end" value={txForm.quantity} onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })} min="0" placeholder="0" />
+                </div>
+
+                {/* Dynamic Lot Fields */}
+                {txMode === 'in' || txMode === 'po' ? (
+                  <div className="col-8">
+                    <label className="erp-label">Assign Lot / Batch Number</label>
+                    <input type="text" className="form-control erp-input font-monospace" value={txForm.lotNumber} onChange={(e) => setTxForm({ ...txForm, lotNumber: e.target.value })} placeholder="Auto-generated if empty" />
+                  </div>
+                ) : (
+                  <div className="col-8">
+                    <label className="erp-label">Select Source Lot <span className="text-danger">*</span></label>
+                    <select className="form-select erp-input font-monospace" value={txForm.lotId} onChange={(e) => setTxForm({ ...txForm, lotId: e.target.value })} disabled={lotsLoading}>
+                      <option value="">{lotsLoading ? 'Loading...' : '-- Choose Active Lot --'}</option>
+                      {availableLots.filter(l => l.quantity > 0).map((lot) => (
+                        <option key={`${lot.lotId}-${lot.lotNumber}`} value={lot.lotId}>
+                          {lot.lotNumber || 'UNASSIGNED'} (Avail: {lot.quantity})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {/* Transfer specific fields */}
+              {txMode === 'transfer' && (
+                <div className="row g-2 mb-3 p-2 bg-light border rounded">
+                  <div className="col-12">
+                    <label className="erp-label text-warning">Destination Warehouse <span className="text-danger">*</span></label>
+                    <select className="form-select erp-input" value={txForm.destWarehouseId} onChange={(e) => setTxForm({ ...txForm, destWarehouseId: e.target.value })}>
+                      <option value="">-- Select Destination Bin --</option>
+                      {warehouses
+                        .filter((warehouse) => warehouse.id !== parseInt(txForm.warehouseId, 10))
+                        .map((warehouse) => (
+                          <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
+                        ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              <div className="d-flex justify-content-end pt-3 border-top mt-auto">
+                <button
+                  type="button"
+                  onClick={(e) => (txMode === 'in' ? openSerialGenerationModal() : handleStockTransaction(e))}
+                  disabled={loading || !txForm.itemId || !txForm.warehouseId || !txForm.quantity || (txMode === 'po' && !currentPoLine)}
+                  className={`btn erp-btn w-100 py-2 fw-bold ${txMode === 'in' ? 'btn-success' : txMode === 'out' ? 'btn-danger' : txMode === 'transfer' ? 'btn-warning text-dark' : 'btn-primary'}`}
+                >
+                  {loading ? 'PROCESSING...' : txMode === 'in' ? 'RECEIVE & GEN SERIALS' : txMode === 'out' ? 'EXECUTE DISPATCH' : txMode === 'transfer' ? 'EXECUTE TRANSFER' : 'RECEIVE PO STOCK'}
+                </button>
+              </div>
+            </form>
+          </fieldset>
         </div>
       </div>
 
