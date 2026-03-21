@@ -768,7 +768,6 @@
 //     </div>
 //   );
 // }
-
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
 import api from '../services/apiClient';
@@ -1696,5 +1695,3 @@ export default function MobileScanner({
     </div>
   );
 }
-
-
