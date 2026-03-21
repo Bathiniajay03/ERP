@@ -2474,18 +2474,30 @@ export default function MobileScanner({
           lotNumber: payload.inventory?.lotNumber ?? ''
         });
         
-        showStatus('success', `Detected: ${payload.itemCode}`);
+        const statusType = payload.isNew ? 'info' : 'success';
+        const statusMessage = payload.isNew 
+          ? `New item auto-created (${payload.itemCode})` 
+          : `Detected: ${payload.itemCode}`;
+          
+        showStatus(statusType, statusMessage);
+        
         stopCamera();
+        fetchData();
         recordBarcodeScan(trimmed);
         
         return payload;
       } catch (err) {
         console.error('Barcode lookup failed', err);
-        showStatus('error', err?.response?.status === 404 ? 'Item not found in catalog' : 'Failed to resolve barcode');
+        const status = err?.response?.status;
+        if (status === 404) {
+          showStatus('error', 'Item not found in catalog');
+        } else {
+          showStatus('error', 'Failed to resolve barcode');
+        }
         return null;
       }
     },
-    [onScanDetected, showStatus, warehouses, recordBarcodeScan, stopCamera]
+    [onScanDetected, showStatus, warehouses, recordBarcodeScan, stopCamera, fetchData]
   );
 
   const handleDetectedCode = useCallback(async (code) => {
@@ -2577,13 +2589,11 @@ export default function MobileScanner({
         
         endpoint = '/purchase-orders/receive';
         payload.poId = selectedPo.id;
-        // Allows custom typed string, otherwise auto-generates
         payload.lotNumber = txForm.lotNumber?.trim() || `LOT-${Date.now().toString().slice(-6)}`;
         payload.scannerDeviceId = 'MOBILE-SCAN';
       } 
       else if (activeTab === 'stock' && txMode === 'in') {
         endpoint = '/stock/in';
-        // Securely passes exactly what the user typed for lot number
         payload.lotNumber = txForm.lotNumber?.trim() || null;
         if (serialGenerationForm.generatedSerials.length > 0) {
           payload.serialNumbers = serialGenerationForm.generatedSerials.map(s => s.serialNumber);
@@ -2753,21 +2763,21 @@ export default function MobileScanner({
                 className={`btn erp-btn ${txMode === 'in' ? 'btn-success fw-bold' : 'btn-light border'}`}
                 onClick={() => { setTxMode('in'); setTxForm(prev => ({...prev, lotId: '', destWarehouseId: ''})); }}
               >
-                📥 RECEIVE
+                📥 IN
               </button>
               <button 
                 type="button" 
                 className={`btn erp-btn ${txMode === 'out' ? 'btn-danger fw-bold' : 'btn-light border'}`}
                 onClick={() => { setTxMode('out'); setTxForm(prev => ({...prev, lotNumber: '', destWarehouseId: ''})); }}
               >
-                📤 DISPATCH
+                📤 OUT
               </button>
               <button 
                 type="button" 
                 className={`btn erp-btn ${txMode === 'transfer' ? 'btn-warning fw-bold' : 'btn-light border'}`}
                 onClick={() => { setTxMode('transfer'); setTxForm(prev => ({...prev, lotNumber: ''})); }}
               >
-                🔁 TRANSFER
+                🔁 XFER
               </button>
             </div>
 
