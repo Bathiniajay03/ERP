@@ -2224,31 +2224,11 @@
 
 
 
-
-
-
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
 import api from '../services/apiClient';
 
 const SCAN_COOLDOWN_MS = 2000;
-
-const createEmptyProductForm = () => ({
-  itemCode: "",
-  description: "",
-  barcode: "",
-  category: "General",
-  unit: "NOS",
-  price: 0,
-  warehouseLocation: "",
-  isLotTracked: false,
-  serialPrefix: "",
-  itemType: "Purchased",
-  maxStockLevel: 0,
-  safetyStock: 0,
-  leadTimeDays: 0,
-  averageDailySales: 0
-});
 
 export default function MobileScanner({
   items = [],
@@ -2308,11 +2288,6 @@ export default function MobileScanner({
     generatedSerials: []
   });
 
-  // Master Data Creation States
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [productForm, setProductForm] = useState(createEmptyProductForm());
-  const [createLoading, setCreateLoading] = useState(false);
-
   const showStatus = useCallback((type, text) => {
     setStatus({ type, text });
     setTimeout(() => setStatus({ type: '', text: '' }), 4000);
@@ -2356,6 +2331,7 @@ export default function MobileScanner({
   const scannerItemId = parseInt(txForm.itemId, 10);
   const scannerWarehouseId = parseInt(txForm.warehouseId, 10);
 
+  // Load POs globally on mount so they are ready for filtering
   const loadPendingPurchaseOrders = useCallback(async () => {
     setPoLoading(true);
     try {
@@ -2375,6 +2351,7 @@ export default function MobileScanner({
     loadPendingPurchaseOrders();
   }, [loadPendingPurchaseOrders]);
 
+  // Fetch available lots when Item or Warehouse changes
   const loadAvailableLots = useCallback(async () => {
     if (!scannerItemId || !scannerWarehouseId) {
       setAvailableLots([]);
@@ -2402,6 +2379,7 @@ export default function MobileScanner({
     loadAvailableLots();
   }, [loadAvailableLots]);
 
+  // Auto-Select Lot for OUT / TRANSFER modes
   useEffect(() => {
     if (availableLots.length > 0 && (txMode === 'out' || txMode === 'transfer')) {
       const validLot = availableLots.find(l => l.quantity > 0);
@@ -2411,6 +2389,7 @@ export default function MobileScanner({
     }
   }, [availableLots, txMode, txForm.lotId]);
 
+  // Auto-Filter POs based on Scanned Item
   useEffect(() => {
     if (!txForm.itemId) {
       setFilteredPoList(poList);
@@ -2420,6 +2399,7 @@ export default function MobileScanner({
       );
       setFilteredPoList(filtered);
       
+      // Auto-select PO if there's exactly 1 match
       if (filtered.length === 1 && selectedPoNumber !== filtered[0].poNumber) {
         setSelectedPoNumber(filtered[0].poNumber);
       } else if (filtered.length === 0) {
@@ -2428,6 +2408,7 @@ export default function MobileScanner({
     }
   }, [poList, txForm.itemId, selectedPoNumber]);
 
+  // Auto-Select PO Line based on Selected PO and Scanned Item
   useEffect(() => {
     if (selectedPo && txForm.itemId) {
       const match = selectedPo.lines.find(l => String(l.itemId) === String(txForm.itemId));
@@ -2441,6 +2422,7 @@ export default function MobileScanner({
       setCurrentPoLine(null);
     }
   }, [selectedPo, txForm.itemId]);
+
 
   const stopCamera = useCallback(() => {
     try {
@@ -2456,15 +2438,13 @@ export default function MobileScanner({
       const trimmed = (barcodeValue || '').trim();
       if (!trimmed) return null;
       
-      setCurrentItem(null);
-      setCurrentPoLine(null);
       setDetectedBarcode(trimmed);
-      let allowScanRecording = true;
       
       try {
         const response = await api.get(`/items/barcode/${encodeURIComponent(trimmed)}`);
         const payload = response.data;
         
+        // Auto-detect Warehouse from inventory payload, fallback to first available
         const autoWarehouseId = payload.inventory?.warehouseId ?? warehouses[0]?.id ?? '';
         
         setCurrentItem({
@@ -2478,33 +2458,11 @@ export default function MobileScanner({
           ...prev,
           itemId: String(payload.itemId),
           warehouseId: String(autoWarehouseId),
+          // Clear manual lot number so it doesn't carry over from previous scans
           lotNumber: '',
           lotId: ''
         }));
 
-        if (txMode === 'po') {
-          if (!selectedPo) {
-            showStatus('warning', 'Select a PO before scanning items.');
-            allowScanRecording = false;
-          } else {
-            const match = selectedPo.lines.find((line) => line.itemId === payload.itemId);
-            if (!match) {
-              showStatus('error', `${payload.itemCode} is not part of PO ${selectedPo.poNumber}`);
-              allowScanRecording = false;
-            } else {
-              setCurrentPoLine(match);
-              setTxForm((prev) => ({ ...prev, warehouseId: String(match.warehouseId) }));
-              showStatus('info', `PO Matched: Pending ${match.pendingQty}`);
-            }
-          }
-        } else {
-          const statusType = payload.isNew ? 'info' : 'success';
-          const statusMessage = payload.isNew 
-            ? `New item auto-created (${payload.itemCode})` 
-            : `Detected: ${payload.itemCode} at Location`;
-          showStatus(statusType, statusMessage);
-        }
-        
         onScanDetected({
           itemId: payload.itemId,
           warehouseId: autoWarehouseId,
@@ -2512,34 +2470,18 @@ export default function MobileScanner({
           lotNumber: payload.inventory?.lotNumber ?? ''
         });
         
+        showStatus('success', `Detected: ${payload.itemCode}`);
         stopCamera();
-        fetchData();
+        recordBarcodeScan(trimmed);
         
-        if (allowScanRecording) {
-          recordBarcodeScan(trimmed);
-        }
         return payload;
       } catch (err) {
         console.error('Barcode lookup failed', err);
-        const status = err?.response?.status;
-        
-        // INTERCEPT 404: Open Item Creation Modal
-        if (status === 404) {
-          stopCamera();
-          showStatus('warning', 'Unknown barcode detected. Please register the item.');
-          setProductForm({
-            ...createEmptyProductForm(),
-            barcode: trimmed,
-            itemCode: `ITEM-${trimmed.substring(0, 8)}` // Auto-suggest an item code
-          });
-          setShowCreateForm(true);
-        } else {
-          showStatus('error', 'Failed to resolve barcode');
-        }
+        showStatus('error', err?.response?.status === 404 ? 'Item not found in catalog' : 'Failed to resolve barcode');
         return null;
       }
     },
-    [onScanDetected, showStatus, warehouses, recordBarcodeScan, txMode, selectedPo, stopCamera, fetchData]
+    [onScanDetected, showStatus, warehouses, recordBarcodeScan, stopCamera]
   );
 
   const handleDetectedCode = useCallback(async (code) => {
@@ -2607,52 +2549,6 @@ export default function MobileScanner({
     return stopCamera;
   }, [startCamera, stopCamera]);
 
-  // --- MASTER DATA CREATION (Triggered by 404) ---
-  const handleCreateProduct = async (e) => {
-    e.preventDefault();
-    setCreateLoading(true);
-    try {
-      const payload = {
-        itemCode: productForm.itemCode,
-        description: productForm.description,
-        barcode: productForm.barcode,
-        category: productForm.category,
-        unit: productForm.unit,
-        price: Number(productForm.price),
-        warehouseLocation: productForm.warehouseLocation,
-        isLotTracked: productForm.isLotTracked,
-        serialPrefix: productForm.serialPrefix || null,
-        itemType: productForm.itemType,
-        maxStockLevel: Number(productForm.maxStockLevel),
-        safetyStock: Number(productForm.safetyStock),
-        leadTimeDays: Number(productForm.leadTimeDays),
-        averageDailySales: Number(productForm.averageDailySales)
-      };
-
-      await api.post("/smart-erp/products", payload);
-      
-      const newBarcode = productForm.barcode;
-      
-      showStatus("success", "Item Registered Successfully. Resuming scan...");
-      setProductForm(createEmptyProductForm());
-      setShowCreateForm(false);
-      fetchData(); // Refresh global items list
-      
-      // Automatically resolve the barcode so the user can immediately receive it
-      if (newBarcode) {
-        await resolveBarcode(newBarcode);
-      } else {
-        void startCamera();
-      }
-      
-    } catch (err) {
-      const errorMsg = err?.response?.data?.message || err?.response?.data || "Product registration failed.";
-      showStatus("error", typeof errorMsg === 'object' ? JSON.stringify(errorMsg) : errorMsg);
-    } finally {
-      setCreateLoading(false);
-    }
-  };
-
   // --- TRANSACTION LOGIC ---
   const handleStockTransaction = async (e) => {
     e?.preventDefault();
@@ -2677,11 +2573,13 @@ export default function MobileScanner({
         
         endpoint = '/purchase-orders/receive';
         payload.poId = selectedPo.id;
+        // Allows custom typed string, otherwise auto-generates
         payload.lotNumber = txForm.lotNumber?.trim() || `LOT-${Date.now().toString().slice(-6)}`;
         payload.scannerDeviceId = 'MOBILE-SCAN';
       } 
       else if (activeTab === 'stock' && txMode === 'in') {
         endpoint = '/stock/in';
+        // Securely passes exactly what the user typed for lot number
         payload.lotNumber = txForm.lotNumber?.trim() || null;
         if (serialGenerationForm.generatedSerials.length > 0) {
           payload.serialNumbers = serialGenerationForm.generatedSerials.map(s => s.serialNumber);
@@ -2851,21 +2749,21 @@ export default function MobileScanner({
                 className={`btn erp-btn ${txMode === 'in' ? 'btn-success fw-bold' : 'btn-light border'}`}
                 onClick={() => { setTxMode('in'); setTxForm(prev => ({...prev, lotId: '', destWarehouseId: ''})); }}
               >
-                📥 IN
+                📥 RECEIVE
               </button>
               <button 
                 type="button" 
                 className={`btn erp-btn ${txMode === 'out' ? 'btn-danger fw-bold' : 'btn-light border'}`}
                 onClick={() => { setTxMode('out'); setTxForm(prev => ({...prev, lotNumber: '', destWarehouseId: ''})); }}
               >
-                📤 OUT
+                📤 DISPATCH
               </button>
               <button 
                 type="button" 
                 className={`btn erp-btn ${txMode === 'transfer' ? 'btn-warning fw-bold' : 'btn-light border'}`}
                 onClick={() => { setTxMode('transfer'); setTxForm(prev => ({...prev, lotNumber: ''})); }}
               >
-                🔁 XFER
+                🔁 TRANSFER
               </button>
             </div>
 
@@ -3062,7 +2960,7 @@ export default function MobileScanner({
       {/* SERIAL GENERATION MODAL                   */}
       {/* ========================================= */}
       {showSerialModal && (
-        <div className="erp-modal-overlay" style={{zIndex: 1060}}>
+        <div className="erp-modal-overlay">
           <div className="erp-dialog erp-dialog-md w-100 m-3">
             <div className="erp-dialog-header">
               <h6 className="m-0 fw-bold">Serial Number Allocation</h6>
@@ -3113,90 +3011,6 @@ export default function MobileScanner({
               >
                 {loading ? 'Saving...' : 'Commit to Ledger'}
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================= */}
-      {/* NEW ITEM CREATION MODAL (TRIGGERED BY 404)*/}
-      {/* ========================================= */}
-      {showCreateForm && (
-        <div className="erp-modal-overlay" style={{ zIndex: 1100 }}>
-          <div className="erp-dialog erp-dialog-md w-100 m-3">
-            <div className="erp-dialog-header">
-              <h6 className="m-0 fw-bold">Unrecognized Item Registration</h6>
-              <button className="btn-close btn-close-white" onClick={() => {
-                setShowCreateForm(false);
-                void startCamera();
-              }}></button>
-            </div>
-            <div className="erp-dialog-body bg-white p-3">
-              <form onSubmit={handleCreateProduct}>
-                <div className="alert alert-warning py-2 small fw-bold mb-3 border-warning">
-                  Barcode {productForm.barcode} is not in the system. Register it now to continue.
-                </div>
-                <div className="row g-2 mb-3">
-                  <div className="col-12">
-                    <label className="erp-label">Item Code <span className="text-danger">*</span></label>
-                    <input className="form-control erp-input font-monospace" placeholder="e.g. RM-1001" value={productForm.itemCode} onChange={(e) => setProductForm({ ...productForm, itemCode: e.target.value })} required />
-                  </div>
-                  <div className="col-12">
-                    <label className="erp-label">Barcode (Scanned)</label>
-                    <input className="form-control erp-input font-monospace bg-light" value={productForm.barcode} disabled />
-                  </div>
-                </div>
-                
-                <div className="mb-3">
-                  <label className="erp-label">Item Description <span className="text-danger">*</span></label>
-                  <textarea className="form-control erp-input" rows="2" value={productForm.description} onChange={(e) => setProductForm({ ...productForm, description: e.target.value })} required />
-                </div>
-
-                <div className="row g-2 mb-3">
-                  <div className="col-6">
-                    <label className="erp-label">Category</label>
-                    <input className="form-control erp-input" placeholder="General" value={productForm.category} onChange={(e) => setProductForm({ ...productForm, category: e.target.value })} />
-                  </div>
-                  <div className="col-6">
-                    <label className="erp-label">Unit Price</label>
-                    <input type="number" step="0.01" className="form-control erp-input text-end" value={productForm.price} onChange={(e) => setProductForm({ ...productForm, price: Number(e.target.value) })} />
-                  </div>
-                  <div className="col-6">
-                    <label className="erp-label">UOM (Unit)</label>
-                    <input className="form-control erp-input" placeholder="NOS" value={productForm.unit} onChange={(e) => setProductForm({ ...productForm, unit: e.target.value })} />
-                  </div>
-                  <div className="col-6">
-                    <label className="erp-label">Item Type</label>
-                    <select className="form-select erp-input" value={productForm.itemType} onChange={(e) => setProductForm({ ...productForm, itemType: e.target.value })}>
-                      <option>Purchased</option>
-                      <option>Manufactured</option>
-                      <option>Service</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="d-flex justify-content-between align-items-center bg-light p-2 border rounded mt-2">
-                  <div className="form-check form-switch mt-1">
-                    <input className="form-check-input" type="checkbox" id="createLotTrack" checked={productForm.isLotTracked} onChange={(e) => setProductForm({ ...productForm, isLotTracked: e.target.checked })} />
-                    <label className="form-check-label erp-label m-0" htmlFor="createLotTrack">Enable Lot Tracking</label>
-                  </div>
-                  {productForm.isLotTracked && (
-                    <div style={{ width: "120px" }}>
-                      <input className="form-control form-control-sm erp-input font-monospace" placeholder="Serial Prefix" value={productForm.serialPrefix} onChange={(e) => setProductForm({ ...productForm, serialPrefix: e.target.value })} />
-                    </div>
-                  )}
-                </div>
-
-                <div className="d-flex justify-content-end gap-2 pt-3 border-top mt-3">
-                  <button type="button" className="btn btn-light border erp-btn" onClick={() => {
-                    setShowCreateForm(false);
-                    void startCamera();
-                  }}>Cancel</button>
-                  <button type="submit" className="btn btn-primary erp-btn fw-bold" disabled={createLoading}>
-                    {createLoading ? 'Saving...' : 'Register & Resume Scan'}
-                  </button>
-                </div>
-              </form>
             </div>
           </div>
         </div>
