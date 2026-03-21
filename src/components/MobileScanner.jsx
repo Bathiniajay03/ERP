@@ -1695,8 +1695,3 @@ export default function MobileScanner({
     </div>
   );
 }
-
-
-
-
-

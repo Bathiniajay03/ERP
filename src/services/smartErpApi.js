@@ -155,10 +155,12 @@ export const smartErpApi = {
   warehouses: () =>
     api.get("/warehouses"),
 
-  createWarehouse: (code, name) =>
-    api.post(
-      `/warehouses?code=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}`
-    ),
+  createWarehouse: (code, name, location = '') => {
+    const locationParam = location ? `&location=${encodeURIComponent(location)}` : "";
+    return api.post(
+      `/warehouses?code=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}${locationParam}`
+    );
+  },
 
 
   // Stock

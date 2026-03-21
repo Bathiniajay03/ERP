@@ -3,7 +3,7 @@ import api from '../services/apiClient';
 
 export default function Warehouses() {
   const [warehouses, setWarehouses] = useState([]);
-  const [form, setForm] = useState({ code: '', name: '' });
+  const [form, setForm] = useState({ code: '', name: '', location: '' });
   const [filter, setFilter] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ text: "", type: "" });
@@ -31,6 +31,7 @@ export default function Warehouses() {
 
     const code = sanitize(form.code).toUpperCase().replace(/\s+/g, '-');
     const name = sanitize(form.name);
+    const location = sanitize(form.location);
 
     if (!/[A-Z]/.test(code)) {
       setMessage({ text: "Warehouse code must include at least one letter.", type: "warning" });
@@ -49,9 +50,11 @@ export default function Warehouses() {
 
     setLoading(true);
     try {
-      await api.post(`/warehouses?code=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}`);
-      setMessage({ text: `✓ Warehouse ${code} created successfully.`, type: "success" });
-      setForm({ code: '', name: '' });
+      const locationParam = location ? `&location=${encodeURIComponent(location)}` : '';
+      await api.post(`/warehouses?code=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}${locationParam}`);
+      const locationSuffix = location ? ` at ${location}` : '';
+      setMessage({ text: `✓ Warehouse ${code} created successfully${locationSuffix}.`, type: "success" });
+      setForm({ code: '', name: '', location: '' });
       fetchWarehouses();
     } catch (e) {
       console.error(e);
@@ -130,6 +133,18 @@ export default function Warehouses() {
                     />
                   </div>
 
+                  <div className="mb-3">
+                    <label className="erp-label">Facility Location <span className="text-muted">(Optional)</span></label>
+                    <input
+                      className="form-control erp-input"
+                      placeholder="e.g. East Campus - Block C"
+                      value={form.location}
+                      onChange={(e) => setForm({ ...form, location: e.target.value })}
+                      disabled={loading}
+                    />
+                    <small className="text-muted mt-1" style={{ fontSize: '0.7rem' }}>This helps the warehouse overview show precise addresses or zones.</small>
+                  </div>
+
                   <div className="pt-3 border-top">
                     <button type="submit" className="btn btn-primary erp-btn w-100 fw-bold" disabled={loading || !form.code || !form.name}>
                       {loading ? "Processing..." : "+ Add Warehouse"}
@@ -165,21 +180,23 @@ export default function Warehouses() {
                 ) : (
                   <table className="table erp-table table-hover mb-0 align-middle">
                     <thead>
-                      <tr>
-                        <th style={{ width: '120px' }}>Facility Code</th>
-                        <th>Facility Name</th>
-                        <th className="text-center" style={{ width: '100px' }}>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filtered.length > 0 ? (
-                        filtered.map((w) => (
-                          <tr key={w.id}>
-                            <td className="fw-bold font-monospace text-dark">{w.code}</td>
-                            <td className="text-dark fw-semibold">{w.name}</td>
-                            <td className="text-center">
-                              <span className="erp-status-tag tag-success">ACTIVE</span>
-                            </td>
+                    <tr>
+                      <th style={{ width: '120px' }}>Facility Code</th>
+                      <th>Facility Name</th>
+                      <th>Facility Location</th>
+                      <th className="text-center" style={{ width: '100px' }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.length > 0 ? (
+                      filtered.map((w) => (
+                        <tr key={w.id}>
+                          <td className="fw-bold font-monospace text-dark">{w.code}</td>
+                          <td className="text-dark fw-semibold">{w.name}</td>
+                          <td className="text-muted">{w.location || 'Not set'}</td>
+                          <td className="text-center">
+                            <span className="erp-status-tag tag-success">ACTIVE</span>
+                          </td>
                           </tr>
                         ))
                       ) : (
