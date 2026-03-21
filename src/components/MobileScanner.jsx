@@ -1,835 +1,3 @@
-// import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-// import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
-// import api from '../services/apiClient';
-
-// const SCAN_COOLDOWN_MS = 2000;
-
-// export default function MobileScanner({
-//   items = [],
-//   warehouses = [],
-//   inventory = [],
-//   fetchData = () => {},
-//   onScanDetected = () => {}
-// }) {
-//   const videoRef = useRef(null);
-//   const codeReaderRef = useRef(null);
-//   const lastScan = useRef({ barcode: '', timestamp: 0 });
-
-//   const [cameraActive, setCameraActive] = useState(false);
-//   const [cameraError, setCameraError] = useState('');
-//   const [manualInput, setManualInput] = useState('');
-//   const [status, setStatus] = useState({ type: '', text: '' });
-//   const [currentItem, setCurrentItem] = useState(null);
-//   const [detectedBarcode, setDetectedBarcode] = useState('');
-//   const [lastScannedBarcode, setLastScannedBarcode] = useState('');
-//   const [poMode, setPoMode] = useState(false);
-//   const [poLoading, setPoLoading] = useState(false);
-//   const [poList, setPoList] = useState([]);
-//   const [selectedPoNumber, setSelectedPoNumber] = useState('');
-//   const [currentPoLine, setCurrentPoLine] = useState(null);
-//   const defaultWarehouseId = warehouses.length ? String(warehouses[0].id) : '';
-//   const selectedPo = useMemo(
-//     () => poList.find((po) => po.poNumber === selectedPoNumber) ?? null,
-//     [poList, selectedPoNumber]
-//   );
-//   const [txForm, setTxForm] = useState({
-//     itemId: '',
-//     warehouseId: defaultWarehouseId,
-//     lotId: '',
-//     quantity: '',
-//     lotNumber: '',
-//     prefix: ''
-//   });
-//   const [loading, setLoading] = useState(false);
-//   const [availableLots, setAvailableLots] = useState([]);
-//   const [lotsLoading, setLotsLoading] = useState(false);
-
-//   const showStatus = useCallback((type, text) => {
-//     setStatus({ type, text });
-//     setTimeout(() => setStatus({ type: '', text: '' }), 4000);
-//   }, []);
-
-//   const findBackCamera = useCallback(async () => {
-//     if (!navigator?.mediaDevices?.enumerateDevices) return undefined;
-
-//     try {
-//       const devices = await navigator.mediaDevices.enumerateDevices();
-//       const videoDevices = devices.filter((device) => device.kind === 'videoinput');
-//       const backCamera = videoDevices.find((device) =>
-//         /(back|rear|environment)/i.test(device.label || '')
-//       );
-//       return backCamera?.deviceId ?? videoDevices[0]?.deviceId;
-//     } catch (error) {
-//       console.error('Camera enumeration failed', error);
-//       return undefined;
-//     }
-//   }, []);
-
-//   const recordBarcodeScan = useCallback((barcode) => {
-//     const previousBarcode = lastScannedBarcode;
-//     setTxForm((prev) => {
-//       const prevQty = parseInt(prev.quantity, 10) || 0;
-//       const nextQty = barcode === previousBarcode ? prevQty + 1 : 1;
-//       return { ...prev, quantity: String(nextQty) };
-//     });
-//     setLastScannedBarcode(barcode);
-//   }, [lastScannedBarcode]);
-
-//   const resetScanState = useCallback(() => {
-//     setLastScannedBarcode('');
-//     setDetectedBarcode('');
-//     setCurrentItem(null);
-//   }, []);
-
-//   const scannerItemId = parseInt(txForm.itemId, 10);
-//   const scannerWarehouseId = parseInt(txForm.warehouseId, 10);
-
-//   const loadAvailableLots = useCallback(async () => {
-//     if (!scannerItemId || !scannerWarehouseId) {
-//       setAvailableLots([]);
-//       return;
-//     }
-//     setLotsLoading(true);
-//     try {
-//       const res = await api.get('/stock/lots', {
-//         params: { itemId: scannerItemId, warehouseId: scannerWarehouseId }
-//       });
-//       const normalized = (res.data || []).map((lot) => ({
-//         lotId: lot.lotId ?? lot.LotId ?? null,
-//         lotNumber: lot.lotNumber ?? lot.LotNumber ?? 'General',
-//         quantity: Number(lot.quantity ?? lot.Quantity ?? 0)
-//       }));
-//       setAvailableLots(normalized);
-//     } catch (error) {
-//       setAvailableLots([]);
-//     } finally {
-//       setLotsLoading(false);
-//     }
-//   }, [scannerItemId, scannerWarehouseId]);
-
-//   const generateAutoLotNumber = useCallback(() => {
-//     const today = new Date();
-//     const dateCode = today.toISOString().split("T")[0].replace(/-/g, "");
-//     const suffix = Math.floor(Math.random() * 9000) + 1000;
-//     return `LOT-${dateCode}-${suffix}`;
-//   }, []);
-
-//   const loadPendingPurchaseOrders = useCallback(async () => {
-//     setPoLoading(true);
-//     try {
-//       const response = await api.get('/purchase-orders/pending');
-//       const list = response.data || [];
-//       setPoList(list);
-//       const hasSelection = selectedPoNumber && list.some((po) => po.poNumber === selectedPoNumber);
-//       if (!hasSelection) {
-//         setSelectedPoNumber(list[0]?.poNumber ?? '');
-//         setCurrentPoLine(null);
-//       }
-//     } catch (error) {
-//       setPoList([]);
-//       setSelectedPoNumber('');
-//       setCurrentPoLine(null);
-//     } finally {
-//       setPoLoading(false);
-//     }
-//   }, [selectedPoNumber]);
-
-//   useEffect(() => {
-//     loadAvailableLots();
-//     setTxForm((prev) => ({ ...prev, lotId: '' }));
-//   }, [loadAvailableLots]);
-
-//   useEffect(() => {
-//     if (poMode) {
-//       void loadPendingPurchaseOrders();
-//     } else {
-//       setPoList([]);
-//       setSelectedPoNumber('');
-//       setCurrentPoLine(null);
-//     }
-//   }, [poMode, loadPendingPurchaseOrders]);
-
-//   useEffect(() => {
-//     if (poMode && selectedPo && selectedPo.lines && selectedPo.lines.length > 0) {
-//       setTxForm((prev) => ({
-//         ...prev,
-//         warehouseId: String(selectedPo.lines[0].warehouseId)
-//       }));
-//     }
-//   }, [poMode, selectedPo]);
-
-//   const stopCamera = useCallback(() => {
-//     try {
-//       codeReaderRef.current?.reset();
-//     } catch (error) {
-//       console.error('Camera cleanup failed', error);
-//     }
-//     setCameraActive(false);
-//   }, []);
-
-//   const resolveBarcode = useCallback(
-//     async (barcodeValue) => {
-//       const trimmed = (barcodeValue || '').trim();
-//       if (!trimmed) return null;
-//       setCurrentItem(null);
-//       setDetectedBarcode(trimmed);
-//       let allowScanRecording = true;
-//       try {
-//         const response = await api.get(`/items/barcode/${encodeURIComponent(trimmed)}`);
-//         const payload = response.data;
-//         const assignedWarehouseId = payload.inventory?.warehouseId ?? warehouses[0]?.id ?? '';
-//         setCurrentItem({
-//           itemId: payload.itemId,
-//           itemCode: payload.itemCode,
-//           description: payload.itemName
-//         });
-//         setTxForm((prev) => ({
-//           ...prev,
-//           itemId: String(payload.itemId),
-//           warehouseId: prev.warehouseId || (assignedWarehouseId ? String(assignedWarehouseId) : '')
-//         }));
-//         if (poMode) {
-//           if (!selectedPo) {
-//             showStatus('warning', 'Select a PO before receiving stock.');
-//             setCurrentPoLine(null);
-//             allowScanRecording = false;
-//           } else {
-//             const match = selectedPo.lines.find((line) => line.itemId === payload.itemId);
-//             if (!match) {
-//               showStatus('error', `${payload.itemCode} is not part of ${selectedPo.poNumber}`);
-//               setCurrentPoLine(null);
-//               allowScanRecording = false;
-//             } else {
-//               setCurrentPoLine(match);
-//               setTxForm((prev) => ({
-//                 ...prev,
-//                 warehouseId: String(match.warehouseId)
-//               }));
-//               showStatus('info', `PO ${selectedPo.poNumber} pending ${match.pendingQty}`);
-//             }
-//           }
-//         }
-//         onScanDetected({
-//           itemId: payload.itemId,
-//           warehouseId: assignedWarehouseId,
-//           lotId: payload.inventory?.lotId ?? null,
-//           lotNumber: payload.inventory?.lotNumber ?? ''
-//         });
-//         const statusType = payload.isNew ? 'info' : 'success';
-//         const statusMessage = payload.isNew
-//           ? `New item auto-created (${payload.itemCode})`
-//           : `Scanned: ${payload.itemCode}`;
-//         showStatus(statusType, statusMessage);
-//         stopCamera();
-//         fetchData();
-//         if (allowScanRecording) {
-//           recordBarcodeScan(trimmed);
-//         }
-//         return payload;
-//       } catch (err) {
-//         console.error('Barcode lookup failed', err);
-//         const status = err?.response?.status;
-//         if (status === 404) {
-//           showStatus('error', 'Item not found for OUT');
-//         } else {
-//           showStatus('error', 'Failed to resolve barcode');
-//         }
-//         return null;
-//       }
-//     },
-//     [fetchData, onScanDetected, showStatus, stopCamera, warehouses, recordBarcodeScan, poMode, selectedPo]
-//   );
-
-//   const handleDetectedCode = useCallback(async (code) => {
-//     const trimmed = (code || '').trim();
-//     if (!trimmed) return;
-//     const now = Date.now();
-//     if (
-//       trimmed !== lastScan.current.barcode ||
-//       now - lastScan.current.timestamp >= SCAN_COOLDOWN_MS
-//     ) {
-//       lastScan.current = { barcode: trimmed, timestamp: now };
-//       await resolveBarcode(trimmed);
-//     }
-//   }, [resolveBarcode]);
-
-//   useEffect(() => {
-//     if (!txForm.warehouseId && warehouses.length > 0) {
-//       setTxForm((prev) => ({ ...prev, warehouseId: String(warehouses[0].id) }));
-//     }
-//   }, [txForm.warehouseId, warehouses]);
-
-//   const handleManualSubmit = async (e) => {
-//     e.preventDefault();
-//     if (!manualInput) return;
-//     await handleDetectedCode(manualInput);
-//     setManualInput('');
-//   };
-
-//   const startCamera = useCallback(async () => {
-//     if (!videoRef.current) return;
-//     setCameraError('');
-//     try {
-//       if (codeReaderRef.current) {
-//         codeReaderRef.current.reset();
-//       } else {
-//         codeReaderRef.current = new BrowserMultiFormatReader();
-//       }
-
-//       const deviceId = await findBackCamera();
-
-//       codeReaderRef.current
-//         .decodeFromVideoDevice(
-//           deviceId ?? undefined,
-//           videoRef.current,
-//           (result, error) => {
-//             if (result) {
-//               handleDetectedCode(result.getText());
-//             }
-//             if (error && !(error instanceof NotFoundException)) {
-//               console.error('Decode error', error);
-//             }
-//           }
-//         )
-//         .catch((err) => {
-//           console.error('Camera error:', err);
-//           setCameraError(`Camera unavailable: ${err.message}`);
-//           setCameraActive(false);
-//           showStatus('warning', 'Camera denied – using manual entry');
-//         });
-
-//       setCameraActive(true);
-//       showStatus('success', 'Camera ready – point at a barcode');
-//     } catch (err) {
-//       console.error('Start camera failed', err);
-//       setCameraError(`Camera unavailable: ${err.message}`);
-//       setCameraActive(false);
-//       showStatus('warning', 'Camera denied – use manual entry');
-//     }
-//   }, [handleDetectedCode, showStatus, findBackCamera]);
-
-//   useEffect(() => {
-//     void startCamera();
-//     return stopCamera;
-//   }, [startCamera, stopCamera]);
-
-//   const handleStockIn = async () => {
-//     if (!txForm.itemId || !txForm.warehouseId || !txForm.quantity) {
-//       return showStatus('error', 'Provide item, warehouse, and quantity');
-//     }
-
-//     const requestedQty = parseFloat(txForm.quantity);
-//     if (poMode && currentPoLine && requestedQty > currentPoLine.pendingQty) {
-//       return showStatus('error', 'Quantity exceeds PO pending amount');
-//     }
-
-//     setLoading(true);
-//     try {
-//       if (poMode) {
-//         if (!selectedPo) {
-//           showStatus('error', 'Select a PO before receiving stock.');
-//           setLoading(false);
-//           return;
-//         }
-//         if (!currentPoLine) {
-//           showStatus('error', 'Scan the PO item first.');
-//           setLoading(false);
-//           return;
-//         }
-
-//         const lotInput = txForm.lotNumber?.trim();
-//         const lotNumberForRequest = lotInput || generateAutoLotNumber();
-
-//         const payload = {
-//           poId: selectedPo.id,
-//           itemId: parseInt(txForm.itemId, 10),
-//           warehouseId: parseInt(txForm.warehouseId, 10),
-//           quantity: requestedQty,
-//           lotNumber: lotNumberForRequest,
-//           scannerDeviceId: 'MOBILE-SCAN'
-//         };
-//         const response = await api.post('/purchase-orders/receive', payload);
-//         showStatus('success', 'PO Item Received Successfully');
-//         setCurrentPoLine(null);
-//         setTxForm((prev) => ({ ...prev, itemId: '', quantity: '', lotNumber: '', lotId: '' }));
-//         resetScanState();
-//         await loadPendingPurchaseOrders();
-//         fetchData();
-//         void loadAvailableLots();
-//         void startCamera();
-//         return;
-//       }
-
-//       const payload = {
-//         itemId: parseInt(txForm.itemId, 10),
-//         warehouseId: parseInt(txForm.warehouseId, 10),
-//         quantity: requestedQty,
-//         lotNumber: txForm.lotNumber?.trim() || null
-//       };
-//       const response = await api.post('/stock/in', payload);
-//       const payloadMessage = response.data?.message || 'Stock IN recorded';
-//       const statusType = response.data?.success ? 'success' : 'error';
-//       showStatus(statusType, payloadMessage);
-//       if (response.data?.success !== false) {
-//         setTxForm((prev) => ({ ...prev, itemId: '', quantity: '', lotNumber: '', lotId: '' }));
-//         resetScanState();
-//         fetchData();
-//         void loadAvailableLots();
-//         void startCamera();
-//       }
-//     } catch (err) {
-//       console.error('Stock IN failed', err);
-//       showStatus('error', err.response?.data?.message || err.response?.data || 'Stock IN failed');
-//     } finally {
-//       setLoading(false);
-//     }
-//   };
-
-//   const handleStockOut = async () => {
-//     if (!txForm.itemId || !txForm.warehouseId || !txForm.lotId || !txForm.quantity) {
-//       return showStatus('error', 'Provide item, warehouse, lot, and quantity');
-//     }
-//     setLoading(true);
-//     try {
-//       const payload = {
-//         itemId: parseInt(txForm.itemId, 10),
-//         warehouseId: parseInt(txForm.warehouseId, 10),
-//         lotId: parseInt(txForm.lotId, 10),
-//         quantity: parseFloat(txForm.quantity)
-//       };
-//       const response = await api.post('/stock/out', payload);
-//       const message = response.data?.message || 'Stock OUT recorded';
-//       const statusType = response.data?.success ? 'success' : 'error';
-//       showStatus(statusType, message);
-//       if (response.data?.success !== false) {
-//         setTxForm((prev) => ({ ...prev, itemId: '', quantity: '', lotId: '' }));
-//         resetScanState();
-//         fetchData();
-//         void loadAvailableLots();
-//         void startCamera();
-//       }
-//     } catch (err) {
-//       console.error('Stock OUT failed', err);
-//       showStatus('error', err.response?.data?.message || err.response?.data || 'Stock OUT failed');
-//     } finally {
-//       setLoading(false);
-//     }
-//   };
-
-//   return (
-//     <div style={styles.container}>
-//       <div style={styles.cameraWrapper}>
-//         <video ref={videoRef} style={styles.video} autoPlay muted playsInline />
-//         <div style={styles.scanOverlay}>
-//           <div style={styles.scanLine} />
-//           <p style={styles.cameraHint}>{cameraActive ? 'Point camera at barcode' : 'Starting camera...'}</p>
-//         </div>
-//       </div>
-
-//       {cameraError && <div style={styles.cameraError}>⚠️ {cameraError}</div>}
-
-//       {status.text && (
-//         <div style={statusStyle(status.type)}>
-//           {status.text}
-//         </div>
-//       )}
-
-//       <form onSubmit={handleManualSubmit} style={styles.manualForm}>
-//         <input
-//           type="text"
-//           placeholder="Type barcode and press Enter"
-//           value={manualInput}
-//           onChange={(e) => setManualInput(e.target.value)}
-//           style={styles.manualInput}
-//         />
-//         <button type="submit" style={styles.manualButton} disabled={!manualInput}>Lookup</button>
-//       </form>
-
-//       <div style={styles.modeSwitcher}>
-//         <button
-//           style={{
-//             ...styles.modeButton,
-//             ...(poMode ? {} : styles.modeButtonActive)
-//           }}
-//           type="button"
-//           onClick={() => {
-//             setPoMode(false);
-//             setCurrentPoLine(null);
-//           }}
-//         >
-//           Normal scan
-//         </button>
-//         <button
-//           style={{
-//             ...styles.modeButton,
-//             ...(poMode ? styles.modeButtonActive : {})
-//           }}
-//           type="button"
-//           onClick={() => setPoMode(true)}
-//         >
-//           PO receive mode
-//         </button>
-//       </div>
-
-//       {poMode && (
-//         <div style={styles.poPanel}>
-//         <div style={styles.poHeader}>
-//           <div style={{ flex: 1 }}>
-//             <label style={styles.label}>Pending POs</label>
-//             <select
-//               style={{ ...styles.select, width: '100%' }}
-//               value={selectedPoNumber}
-//               onChange={(e) => {
-//                 setSelectedPoNumber(e.target.value);
-//                 setCurrentPoLine(null);
-//               }}
-//             >
-//               <option value="">Select PO...</option>
-//                 {poList.map((po) => (
-//                   <option key={po.poNumber} value={po.poNumber}>
-//                     {po.poNumber} · {po.totalPending.toFixed(0)} pending
-//                   </option>
-//                 ))}
-//               </select>
-//           </div>
-//           <div>
-//             {poLoading ? (
-//               <span style={styles.smallText}>Loading...</span>
-//             ) : (
-//               <span style={styles.smallText}>{selectedPo ? selectedPo.supplierName : 'No PO selected'}</span>
-//             )}
-//           </div>
-//         </div>
-//         {selectedPo && (
-//           <div style={styles.poWarehouse}>
-//             <span>Warehouse</span>
-//             <strong>
-//               {currentPoLine?.warehouseName ||
-//                 selectedPo.lines[0]?.warehouseName ||
-//                 'N/A'}
-//             </strong>
-//           </div>
-//         )}
-//         {selectedPo ? (
-//           <div style={styles.poLines}>
-//               {selectedPo.lines.map((line) => (
-//                 <div key={line.lineId} style={styles.poLineItem}>
-//                   <div>
-//                     <strong>{line.itemCode}</strong> <small className="text-muted">{line.itemName}</small>
-//                   </div>
-//                   <div style={styles.poQty}>
-//                     <span>Pending {line.pendingQty.toFixed(0)}</span>
-//                   </div>
-//                 </div>
-//               ))}
-//               {currentPoLine && (
-//                 <div style={styles.currentLineInfo}>
-//                   <div><strong>Receiving:</strong> {currentPoLine.itemCode}</div>
-//                   <div style={styles.currentLineStats}>
-//                     <span>Ordered: {currentPoLine.orderedQty}</span>
-//                     <span>Received: {currentPoLine.receivedQty}</span>
-//                     <span>Pending: {currentPoLine.pendingQty}</span>
-//                   </div>
-//                 </div>
-//               )}
-//             </div>
-//           ) : (
-//             <div style={styles.emptyLine}>No pending PO lines to show</div>
-//           )}
-//         </div>
-//       )}
-
-//       {currentItem && (
-//         <div style={styles.itemCard}>
-//           <p><strong>{currentItem.itemCode}</strong> · {currentItem.description}</p>
-//           <p className="text-muted" style={{ fontSize: '0.9rem' }}>Detected barcode: {detectedBarcode}</p>
-//         </div>
-//       )}
-
-//       <div style={styles.txGrid}>
-//         <div>
-//           <label style={styles.label}>Warehouse</label>
-//           <select
-//             value={txForm.warehouseId}
-//             onChange={(e) => setTxForm({ ...txForm, warehouseId: e.target.value })}
-//             style={styles.select}
-//             disabled={poMode}
-//           >
-//             <option value="">Select warehouse</option>
-//             {warehouses.map((w) => (
-//               <option key={w.id} value={w.id}>{w.name}</option>
-//             ))}
-//           </select>
-//         </div>
-//         <div>
-//           <label style={styles.label}>Lot</label>
-//           <select
-//             value={txForm.lotId}
-//             onChange={(e) => setTxForm({ ...txForm, lotId: e.target.value })}
-//             style={styles.select}
-//             disabled={lotsLoading}
-//           >
-//             <option value="">{lotsLoading ? 'Loading lots…' : 'Select lot'}</option>
-//             {availableLots
-//               .filter((lot) => lot.lotId !== null && lot.quantity > 0)
-//               .map((lot) => (
-//                 <option key={`${lot.lotId}-${lot.lotNumber}`} value={lot.lotId}>
-//                   {lot.lotNumber || 'Unassigned'} (Qty: {lot.quantity})
-//                 </option>
-//               ))}
-//           </select>
-//         </div>
-//         <div>
-//           <label style={styles.label}>Quantity</label>
-//           <input
-//             type="number"
-//             value={txForm.quantity}
-//             onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })}
-//             style={styles.input}
-//           />
-//         </div>
-//         <div>
-//           <label style={styles.label}>Lot Number (IN)</label>
-//           <input
-//             type="text"
-//             value={txForm.lotNumber}
-//             onChange={(e) => setTxForm({ ...txForm, lotNumber: e.target.value })}
-//             style={styles.input}
-//           />
-//         </div>
-//       </div>
-
-//       <div style={styles.buttonRow}>
-//         <button type="button" onClick={handleStockIn} disabled={loading} style={{ ...styles.actionBtn, backgroundColor: '#10b981' }}>
-//           {loading ? 'Processing...' : 'Stock IN'}
-//         </button>
-//         <button type="button" onClick={handleStockOut} disabled={loading} style={{ ...styles.actionBtn, backgroundColor: '#ef4444' }}>
-//           {loading ? 'Processing...' : 'Stock OUT'}
-//         </button>
-//       </div>
-//     </div>
-//   );
-// }
-
-// const statusStyle = (type) => {
-//   const palette = {
-//     success: { background: '#dcfce7', color: '#166534', border: '#166534' },
-//     info: { background: '#e0f2fe', color: '#0369a1', border: '#0369a1' },
-//     warning: { background: '#fef3c7', color: '#92400e', border: '#92400e' },
-//     error: { background: '#fee2e2', color: '#991b1b', border: '#991b1b' }
-//   };
-//   const style = palette[type] || palette.error;
-//   return {
-//     margin: '12px 0',
-//     padding: '10px',
-//     borderRadius: '8px',
-//     border: `1px solid ${style.border}`,
-//     background: style.background,
-//     color: style.color,
-//     display: 'flex',
-//     justifyContent: 'space-between'
-//   };
-// };
-
-// const styles = {
-//   container: {
-//     padding: '16px',
-//     background: '#f5f7fb',
-//     minHeight: '100vh'
-//   },
-//   cameraWrapper: {
-//     position: 'relative',
-//     borderRadius: '12px',
-//     overflow: 'hidden',
-//     background: '#000',
-//     minHeight: '240px',
-//     marginBottom: '16px'
-//   },
-//   video: {
-//     width: '100%',
-//     height: '100%',
-//     objectFit: 'cover'
-//   },
-//   scanOverlay: {
-//     position: 'absolute',
-//     inset: 0,
-//     display: 'flex',
-//     flexDirection: 'column',
-//     alignItems: 'center',
-//     justifyContent: 'center',
-//     pointerEvents: 'none'
-//   },
-//   scanLine: {
-//     width: '70%',
-//     height: '3px',
-//     background: '#10b981',
-//     borderRadius: '999px',
-//     boxShadow: '0 0 10px rgba(16,185,129,0.8)'
-//   },
-//   cameraHint: {
-//     color: '#fff',
-//     fontWeight: '600',
-//     marginTop: '12px',
-//     textShadow: '0 2px 8px rgba(0,0,0,0.6)'
-//   },
-//   cameraError: {
-//     background: '#fee2e2',
-//     color: '#991b1b',
-//     padding: '10px',
-//     borderRadius: '8px',
-//     marginBottom: '12px'
-//   },
-//   manualForm: {
-//     display: 'flex',
-//     gap: '10px',
-//     marginBottom: '16px'
-//   },
-//   manualInput: {
-//     flex: 1,
-//     padding: '10px 14px',
-//     borderRadius: '8px',
-//     border: '1px solid #cbd5e1'
-//   },
-//   manualButton: {
-//     padding: '0 18px',
-//     borderRadius: '8px',
-//     border: 'none',
-//     background: '#2563eb',
-//     color: '#fff',
-//     cursor: 'pointer'
-//   },
-//   itemCard: {
-//     background: '#fff',
-//     padding: '14px',
-//     borderRadius: '10px',
-//     marginBottom: '16px',
-//     boxShadow: '0 8px 16px rgba(15,23,42,0.08)'
-//   },
-//   txGrid: {
-//     display: 'grid',
-//     gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-//     gap: '12px',
-//     marginBottom: '16px'
-//   },
-//   label: {
-//     display: 'block',
-//     marginBottom: '4px',
-//     fontSize: '0.85rem',
-//     fontWeight: '600',
-//     color: '#0f172a'
-//   },
-//   select: {
-//     width: '100%',
-//     padding: '10px',
-//     borderRadius: '8px',
-//     border: '1px solid #cbd5e1'
-//   },
-//   input: {
-//     width: '100%',
-//     padding: '10px',
-//     borderRadius: '8px',
-//     border: '1px solid #cbd5e1'
-//   },
-//   buttonRow: {
-//     display: 'flex',
-//     gap: '10px',
-//     flexWrap: 'wrap'
-//   },
-//   actionBtn: {
-//     flex: 1,
-//     padding: '12px',
-//     border: 'none',
-//     borderRadius: '10px',
-//     color: '#fff',
-//     fontWeight: '600',
-//     cursor: 'pointer'
-//   },
-//   modeSwitcher: {
-//     display: 'flex',
-//     gap: '8px',
-//     marginBottom: '16px'
-//   },
-//   modeButton: {
-//     flex: 1,
-//     padding: '10px',
-//     borderRadius: '10px',
-//     border: '1px solid #cbd5e1',
-//     background: '#fff',
-//     color: '#0f172a',
-//     fontWeight: '600',
-//     cursor: 'pointer'
-//   },
-//   modeButtonActive: {
-//     background: '#0f172a',
-//     color: '#fff',
-//     borderColor: '#0f172a'
-//   },
-//   poPanel: {
-//     border: '1px solid #e2e8f0',
-//     borderRadius: '12px',
-//     padding: '12px',
-//     marginBottom: '16px',
-//     background: '#fff',
-//     boxShadow: '0 4px 10px rgba(15, 23, 42, 0.08)'
-//   },
-//   poHeader: {
-//     display: 'flex',
-//     gap: '12px',
-//     alignItems: 'flex-end',
-//     marginBottom: '12px'
-//   },
-//   poLines: {
-//     display: 'flex',
-//     flexDirection: 'column',
-//     gap: '6px'
-//   },
-//   poLineItem: {
-//     display: 'flex',
-//     justifyContent: 'space-between',
-//     padding: '8px 0',
-//     borderBottom: '1px solid #f1f5f9'
-//   },
-//   poQty: {
-//     color: '#0f172a',
-//     fontWeight: '600'
-//   },
-//   currentLineInfo: {
-//     marginTop: '10px',
-//     padding: '8px',
-//     borderRadius: '10px',
-//     background: '#f8fafc',
-//     border: '1px dashed #cbd5e1'
-//   },
-//   currentLineStats: {
-//     display: 'flex',
-//     gap: '12px',
-//     fontSize: '0.85rem',
-//     color: '#475569',
-//     marginTop: '6px'
-//   },
-//   emptyLine: {
-//     padding: '10px',
-//     borderRadius: '8px',
-//     background: '#fefce8',
-//     color: '#92400e'
-//   },
-//   smallText: {
-//     fontSize: '0.75rem',
-//     color: '#475569'
-//   }
-//   ,
-//   poWarehouse: {
-//     display: 'flex',
-//     justifyContent: 'space-between',
-//     alignItems: 'center',
-//     padding: '8px',
-//     background: '#f1f5f9',
-//     borderRadius: '10px',
-//     marginBottom: '10px'
-//   }
-// };
-
-
 
 // import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 // import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
@@ -837,10 +5,27 @@
 
 // const SCAN_COOLDOWN_MS = 2000;
 
+// // Base template for the on-the-fly item creation
+// const createEmptyProductForm = () => ({
+//   itemCode: "",
+//   description: "",
+//   barcode: "",
+//   category: "General",
+//   unit: "NOS",
+//   price: 0,
+//   warehouseLocation: "",
+//   isLotTracked: true, // Default to true to encourage tracking
+//   serialPrefix: "",
+//   itemType: "Purchased",
+//   maxStockLevel: 1000,
+//   safetyStock: 10,
+//   leadTimeDays: 3,
+//   averageDailySales: 0
+// });
+
 // export default function MobileScanner({
 //   items = [],
 //   warehouses = [],
-//   inventory = [],
 //   fetchData = () => {},
 //   onScanDetected = () => {}
 // }) {
@@ -848,1410 +33,19 @@
 //   const codeReaderRef = useRef(null);
 //   const lastScan = useRef({ barcode: '', timestamp: 0 });
 
+//   // --- Global States ---
 //   const [cameraActive, setCameraActive] = useState(false);
 //   const [cameraError, setCameraError] = useState('');
 //   const [manualInput, setManualInput] = useState('');
 //   const [status, setStatus] = useState({ type: '', text: '' });
+//   const [loading, setLoading] = useState(false);
+  
+//   // --- Context States ---
 //   const [currentItem, setCurrentItem] = useState(null);
 //   const [detectedBarcode, setDetectedBarcode] = useState('');
 //   const [lastScannedBarcode, setLastScannedBarcode] = useState('');
-//   const [poMode, setPoMode] = useState(false);
-//   const [poLoading, setPoLoading] = useState(false);
-//   const [poList, setPoList] = useState([]);
-//   const [selectedPoNumber, setSelectedPoNumber] = useState('');
-//   const [currentPoLine, setCurrentPoLine] = useState(null);
-//   const defaultWarehouseId = warehouses.length ? String(warehouses[0].id) : '';
   
-//   const selectedPo = useMemo(
-//     () => poList.find((po) => po.poNumber === selectedPoNumber) ?? null,
-//     [poList, selectedPoNumber]
-//   );
-  
-//   const [txForm, setTxForm] = useState({
-//     itemId: '',
-//     warehouseId: defaultWarehouseId,
-//     lotId: '',
-//     quantity: '',
-//     lotNumber: '',
-//     prefix: ''
-//   });
-  
-//   const [loading, setLoading] = useState(false);
-//   const [availableLots, setAvailableLots] = useState([]);
-//   const [lotsLoading, setLotsLoading] = useState(false);
-
-//   const showStatus = useCallback((type, text) => {
-//     setStatus({ type, text });
-//     setTimeout(() => setStatus({ type: '', text: '' }), 4000);
-//   }, []);
-
-//   const findBackCamera = useCallback(async () => {
-//     if (!navigator?.mediaDevices?.enumerateDevices) return undefined;
-
-//     try {
-//       const devices = await navigator.mediaDevices.enumerateDevices();
-//       const videoDevices = devices.filter((device) => device.kind === 'videoinput');
-//       const backCamera = videoDevices.find((device) =>
-//         /(back|rear|environment)/i.test(device.label || '')
-//       );
-//       return backCamera?.deviceId ?? videoDevices[0]?.deviceId;
-//     } catch (error) {
-//       console.error('Camera enumeration failed', error);
-//       return undefined;
-//     }
-//   }, []);
-
-//   const recordBarcodeScan = useCallback((barcode) => {
-//     const previousBarcode = lastScannedBarcode;
-//     setTxForm((prev) => {
-//       const prevQty = parseInt(prev.quantity, 10) || 0;
-//       const nextQty = barcode === previousBarcode ? prevQty + 1 : 1;
-//       return { ...prev, quantity: String(nextQty) };
-//     });
-//     setLastScannedBarcode(barcode);
-//   }, [lastScannedBarcode]);
-
-//   const resetScanState = useCallback(() => {
-//     setLastScannedBarcode('');
-//     setDetectedBarcode('');
-//     setCurrentItem(null);
-//   }, []);
-
-//   const scannerItemId = parseInt(txForm.itemId, 10);
-//   const scannerWarehouseId = parseInt(txForm.warehouseId, 10);
-
-//   const loadAvailableLots = useCallback(async () => {
-//     if (!scannerItemId || !scannerWarehouseId) {
-//       setAvailableLots([]);
-//       return;
-//     }
-//     setLotsLoading(true);
-//     try {
-//       const res = await api.get('/stock/lots', {
-//         params: { itemId: scannerItemId, warehouseId: scannerWarehouseId }
-//       });
-//       const normalized = (res.data || []).map((lot) => ({
-//         lotId: lot.lotId ?? lot.LotId ?? null,
-//         lotNumber: lot.lotNumber ?? lot.LotNumber ?? 'General',
-//         quantity: Number(lot.quantity ?? lot.Quantity ?? 0)
-//       }));
-//       setAvailableLots(normalized);
-//     } catch (error) {
-//       setAvailableLots([]);
-//     } finally {
-//       setLotsLoading(false);
-//     }
-//   }, [scannerItemId, scannerWarehouseId]);
-
-//   const generateAutoLotNumber = useCallback(() => {
-//     const today = new Date();
-//     const dateCode = today.toISOString().split("T")[0].replace(/-/g, "");
-//     const suffix = Math.floor(Math.random() * 9000) + 1000;
-//     return `LOT-${dateCode}-${suffix}`;
-//   }, []);
-
-//   const loadPendingPurchaseOrders = useCallback(async () => {
-//     setPoLoading(true);
-//     try {
-//       const response = await api.get('/purchase-orders/pending');
-//       const list = response.data || [];
-//       setPoList(list);
-//       const hasSelection = selectedPoNumber && list.some((po) => po.poNumber === selectedPoNumber);
-//       if (!hasSelection) {
-//         setSelectedPoNumber(list[0]?.poNumber ?? '');
-//         setCurrentPoLine(null);
-//       }
-//     } catch (error) {
-//       setPoList([]);
-//       setSelectedPoNumber('');
-//       setCurrentPoLine(null);
-//     } finally {
-//       setPoLoading(false);
-//     }
-//   }, [selectedPoNumber]);
-
-//   useEffect(() => {
-//     loadAvailableLots();
-//     setTxForm((prev) => ({ ...prev, lotId: '' }));
-//   }, [loadAvailableLots]);
-
-//   useEffect(() => {
-//     if (poMode) {
-//       void loadPendingPurchaseOrders();
-//     } else {
-//       setPoList([]);
-//       setSelectedPoNumber('');
-//       setCurrentPoLine(null);
-//     }
-//   }, [poMode, loadPendingPurchaseOrders]);
-
-//   useEffect(() => {
-//     if (poMode && selectedPo && selectedPo.lines && selectedPo.lines.length > 0) {
-//       setTxForm((prev) => ({
-//         ...prev,
-//         warehouseId: String(selectedPo.lines[0].warehouseId)
-//       }));
-//     }
-//   }, [poMode, selectedPo]);
-
-//   const stopCamera = useCallback(() => {
-//     try {
-//       codeReaderRef.current?.reset();
-//     } catch (error) {
-//       console.error('Camera cleanup failed', error);
-//     }
-//     setCameraActive(false);
-//   }, []);
-
-//   const resolveBarcode = useCallback(
-//     async (barcodeValue) => {
-//       const trimmed = (barcodeValue || '').trim();
-//       if (!trimmed) return null;
-//       setCurrentItem(null);
-//       setDetectedBarcode(trimmed);
-//       let allowScanRecording = true;
-//       try {
-//         const response = await api.get(`/items/barcode/${encodeURIComponent(trimmed)}`);
-//         const payload = response.data;
-//         const assignedWarehouseId = payload.inventory?.warehouseId ?? warehouses[0]?.id ?? '';
-//         setCurrentItem({
-//           itemId: payload.itemId,
-//           itemCode: payload.itemCode,
-//           description: payload.itemName
-//         });
-//         setTxForm((prev) => ({
-//           ...prev,
-//           itemId: String(payload.itemId),
-//           warehouseId: prev.warehouseId || (assignedWarehouseId ? String(assignedWarehouseId) : '')
-//         }));
-//         if (poMode) {
-//           if (!selectedPo) {
-//             showStatus('warning', 'Select a PO before receiving stock.');
-//             setCurrentPoLine(null);
-//             allowScanRecording = false;
-//           } else {
-//             const match = selectedPo.lines.find((line) => line.itemId === payload.itemId);
-//             if (!match) {
-//               showStatus('error', `${payload.itemCode} is not part of ${selectedPo.poNumber}`);
-//               setCurrentPoLine(null);
-//               allowScanRecording = false;
-//             } else {
-//               setCurrentPoLine(match);
-//               setTxForm((prev) => ({
-//                 ...prev,
-//                 warehouseId: String(match.warehouseId)
-//               }));
-//               showStatus('info', `PO ${selectedPo.poNumber} pending ${match.pendingQty}`);
-//             }
-//           }
-//         }
-//         onScanDetected({
-//           itemId: payload.itemId,
-//           warehouseId: assignedWarehouseId,
-//           lotId: payload.inventory?.lotId ?? null,
-//           lotNumber: payload.inventory?.lotNumber ?? ''
-//         });
-//         const statusType = payload.isNew ? 'info' : 'success';
-//         const statusMessage = payload.isNew
-//           ? `New item auto-created (${payload.itemCode})`
-//           : `Scanned: ${payload.itemCode}`;
-//         showStatus(statusType, statusMessage);
-//         stopCamera();
-//         fetchData();
-//         if (allowScanRecording) {
-//           recordBarcodeScan(trimmed);
-//         }
-//         return payload;
-//       } catch (err) {
-//         console.error('Barcode lookup failed', err);
-//         const status = err?.response?.status;
-//         if (status === 404) {
-//           showStatus('error', 'Item not found for OUT');
-//         } else {
-//           showStatus('error', 'Failed to resolve barcode');
-//         }
-//         return null;
-//       }
-//     },
-//     [fetchData, onScanDetected, showStatus, stopCamera, warehouses, recordBarcodeScan, poMode, selectedPo]
-//   );
-
-//   const handleDetectedCode = useCallback(async (code) => {
-//     const trimmed = (code || '').trim();
-//     if (!trimmed) return;
-//     const now = Date.now();
-//     if (
-//       trimmed !== lastScan.current.barcode ||
-//       now - lastScan.current.timestamp >= SCAN_COOLDOWN_MS
-//     ) {
-//       lastScan.current = { barcode: trimmed, timestamp: now };
-//       await resolveBarcode(trimmed);
-//     }
-//   }, [resolveBarcode]);
-
-//   useEffect(() => {
-//     if (!txForm.warehouseId && warehouses.length > 0) {
-//       setTxForm((prev) => ({ ...prev, warehouseId: String(warehouses[0].id) }));
-//     }
-//   }, [txForm.warehouseId, warehouses]);
-
-//   const handleManualSubmit = async (e) => {
-//     e.preventDefault();
-//     if (!manualInput) return;
-//     await handleDetectedCode(manualInput);
-//     setManualInput('');
-//   };
-
-//   const startCamera = useCallback(async () => {
-//     if (!videoRef.current) return;
-//     setCameraError('');
-//     try {
-//       if (codeReaderRef.current) {
-//         codeReaderRef.current.reset();
-//       } else {
-//         codeReaderRef.current = new BrowserMultiFormatReader();
-//       }
-
-//       const deviceId = await findBackCamera();
-
-//       codeReaderRef.current
-//         .decodeFromVideoDevice(
-//           deviceId ?? undefined,
-//           videoRef.current,
-//           (result, error) => {
-//             if (result) {
-//               handleDetectedCode(result.getText());
-//             }
-//             if (error && !(error instanceof NotFoundException)) {
-//               console.error('Decode error', error);
-//             }
-//           }
-//         )
-//         .catch((err) => {
-//           console.error('Camera error:', err);
-//           setCameraError(`Camera unavailable: ${err.message}`);
-//           setCameraActive(false);
-//           showStatus('warning', 'Camera denied – using manual entry');
-//         });
-
-//       setCameraActive(true);
-//       showStatus('success', 'Camera ready – point at a barcode');
-//     } catch (err) {
-//       console.error('Start camera failed', err);
-//       setCameraError(`Camera unavailable: ${err.message}`);
-//       setCameraActive(false);
-//       showStatus('warning', 'Camera denied – use manual entry');
-//     }
-//   }, [handleDetectedCode, showStatus, findBackCamera]);
-
-//   useEffect(() => {
-//     void startCamera();
-//     return stopCamera;
-//   }, [startCamera, stopCamera]);
-
-//   const handleStockIn = async () => {
-//     if (!txForm.itemId || !txForm.warehouseId || !txForm.quantity) {
-//       return showStatus('error', 'Provide item, warehouse, and quantity');
-//     }
-
-//     const requestedQty = parseFloat(txForm.quantity);
-//     if (poMode && currentPoLine && requestedQty > currentPoLine.pendingQty) {
-//       return showStatus('error', 'Quantity exceeds PO pending amount');
-//     }
-
-//     setLoading(true);
-//     try {
-//       if (poMode) {
-//         if (!selectedPo) {
-//           showStatus('error', 'Select a PO before receiving stock.');
-//           setLoading(false);
-//           return;
-//         }
-//         if (!currentPoLine) {
-//           showStatus('error', 'Scan the PO item first.');
-//           setLoading(false);
-//           return;
-//         }
-
-//         const lotInput = txForm.lotNumber?.trim();
-//         const lotNumberForRequest = lotInput || generateAutoLotNumber();
-
-//         const payload = {
-//           poId: selectedPo.id,
-//           itemId: parseInt(txForm.itemId, 10),
-//           warehouseId: parseInt(txForm.warehouseId, 10),
-//           quantity: requestedQty,
-//           lotNumber: lotNumberForRequest,
-//           scannerDeviceId: 'MOBILE-SCAN'
-//         };
-//         await api.post('/purchase-orders/receive', payload);
-//         showStatus('success', 'PO Item Received Successfully');
-//         setCurrentPoLine(null);
-//         setTxForm((prev) => ({ ...prev, itemId: '', quantity: '', lotNumber: '', lotId: '' }));
-//         resetScanState();
-//         await loadPendingPurchaseOrders();
-//         fetchData();
-//         void loadAvailableLots();
-//         void startCamera();
-//         return;
-//       }
-
-//       const payload = {
-//         itemId: parseInt(txForm.itemId, 10),
-//         warehouseId: parseInt(txForm.warehouseId, 10),
-//         quantity: requestedQty,
-//         lotNumber: txForm.lotNumber?.trim() || null
-//       };
-//       const response = await api.post('/stock/in', payload);
-//       const payloadMessage = response.data?.message || 'Stock IN recorded';
-//       const statusType = response.data?.success ? 'success' : 'error';
-//       showStatus(statusType, payloadMessage);
-      
-//       if (response.data?.success !== false) {
-//         setTxForm((prev) => ({ ...prev, itemId: '', quantity: '', lotNumber: '', lotId: '' }));
-//         resetScanState();
-//         fetchData();
-//         void loadAvailableLots();
-//         void startCamera();
-//       }
-//     } catch (err) {
-//       console.error('Stock IN failed', err);
-//       showStatus('error', err.response?.data?.message || err.response?.data || 'Stock IN failed');
-//     } finally {
-//       setLoading(false);
-//     }
-//   };
-
-//   const handleStockOut = async () => {
-//     if (!txForm.itemId || !txForm.warehouseId || !txForm.lotId || !txForm.quantity) {
-//       return showStatus('error', 'Provide item, warehouse, lot, and quantity');
-//     }
-//     setLoading(true);
-//     try {
-//       const payload = {
-//         itemId: parseInt(txForm.itemId, 10),
-//         warehouseId: parseInt(txForm.warehouseId, 10),
-//         lotId: parseInt(txForm.lotId, 10),
-//         quantity: parseFloat(txForm.quantity)
-//       };
-//       const response = await api.post('/stock/out', payload);
-//       const message = response.data?.message || 'Stock OUT recorded';
-//       const statusType = response.data?.success ? 'success' : 'error';
-//       showStatus(statusType, message);
-      
-//       if (response.data?.success !== false) {
-//         setTxForm((prev) => ({ ...prev, itemId: '', quantity: '', lotId: '' }));
-//         resetScanState();
-//         fetchData();
-//         void loadAvailableLots();
-//         void startCamera();
-//       }
-//     } catch (err) {
-//       console.error('Stock OUT failed', err);
-//       showStatus('error', err.response?.data?.message || err.response?.data || 'Stock OUT failed');
-//     } finally {
-//       setLoading(false);
-//     }
-//   };
-
-//   // Helper to style status messages
-//   const getAlertClass = (type) => {
-//     if (type === 'success') return 'alert-success border-success text-success';
-//     if (type === 'error') return 'alert-danger border-danger text-danger';
-//     if (type === 'warning') return 'alert-warning border-warning text-warning';
-//     return 'alert-info border-info text-info';
-//   };
-
-//   return (
-//     <div className="bg-white p-3 p-md-4 h-100 d-flex flex-column">
-      
-//       {/* MODE SWITCHER */}
-//       <div className="btn-group w-100 mb-3 shadow-sm">
-//         <button 
-//           className={`btn erp-btn fw-bold ${!poMode ? 'btn-dark' : 'btn-outline-dark bg-white'}`}
-//           onClick={() => { setPoMode(false); setCurrentPoLine(null); }}
-//         >
-//           Normal Scanner
-//         </button>
-//         <button 
-//           className={`btn erp-btn fw-bold ${poMode ? 'btn-dark' : 'btn-outline-dark bg-white'}`}
-//           onClick={() => setPoMode(true)}
-//         >
-//           PO Receive Mode
-//         </button>
-//       </div>
-
-//       {/* PO CONTEXT PANEL */}
-//       {poMode && (
-//         <div className="p-3 mb-3 bg-light border rounded">
-//           <div className="d-flex justify-content-between align-items-center mb-2">
-//             <label className="erp-label m-0">Pending Purchase Orders</label>
-//             {poLoading && <div className="spinner-border spinner-border-sm text-primary"></div>}
-//           </div>
-//           <select
-//             className="form-select erp-input font-monospace mb-2"
-//             value={selectedPoNumber}
-//             onChange={(e) => {
-//               setSelectedPoNumber(e.target.value);
-//               setCurrentPoLine(null);
-//             }}
-//           >
-//             <option value="">-- Select Target PO --</option>
-//             {poList.map((po) => (
-//               <option key={po.poNumber} value={po.poNumber}>
-//                 {po.poNumber} ({po.totalPending.toFixed(0)} units pending)
-//               </option>
-//             ))}
-//           </select>
-          
-//           <div className="d-flex justify-content-between align-items-center bg-white p-2 border rounded small">
-//             <span className="text-muted fw-bold">Supplier:</span>
-//             <span className="fw-semibold text-dark">{selectedPo ? selectedPo.supplierName : 'N/A'}</span>
-//           </div>
-          
-//           {selectedPo && selectedPo.lines && selectedPo.lines.length > 0 ? (
-//              <div className="mt-3 border-top pt-2">
-//                <h6 className="erp-meta-label">PO Line Items</h6>
-//                <div className="d-flex flex-column gap-1">
-//                  {selectedPo.lines.map((line) => (
-//                    <div key={line.lineId} className="d-flex justify-content-between align-items-center bg-white p-2 border rounded">
-//                      <span className="fw-bold font-monospace">{line.itemCode}</span>
-//                      <span className="badge bg-warning text-dark">Pend: {line.pendingQty}</span>
-//                    </div>
-//                  ))}
-//                </div>
-//              </div>
-//           ) : (
-//             selectedPo && <div className="mt-2 text-danger small fw-bold">No pending lines found for this PO.</div>
-//           )}
-//         </div>
-//       )}
-
-//       {/* CAMERA VIEWFINDER */}
-//       <div className="position-relative bg-dark rounded-3 overflow-hidden shadow-sm mb-3" style={{ minHeight: '220px' }}>
-//         <video ref={videoRef} className="w-100 h-100 object-fit-cover" autoPlay muted playsInline />
-        
-//         {/* Scanner Overlay */}
-//         <div className="position-absolute top-0 start-0 w-100 h-100 d-flex flex-column align-items-center justify-content-center" style={{ pointerEvents: 'none' }}>
-//           <div className="scanner-laser" style={{ width: '70%', height: '2px', backgroundColor: '#10b981', boxShadow: '0 0 10px #10b981' }}></div>
-//           <div className="text-white fw-bold mt-3 px-3 py-1 rounded" style={{ backgroundColor: 'rgba(0,0,0,0.5)', fontSize: '0.8rem' }}>
-//             {cameraActive ? 'Point camera at barcode' : 'Initializing camera...'}
-//           </div>
-//         </div>
-//       </div>
-
-//       {cameraError && <div className="alert alert-danger py-2 small fw-bold">⚠️ {cameraError}</div>}
-
-//       {/* MANUAL INPUT */}
-//       <form onSubmit={handleManualSubmit} className="d-flex gap-2 mb-3">
-//         <input
-//           type="text"
-//           className="form-control erp-input font-monospace"
-//           placeholder="Manual barcode entry..."
-//           value={manualInput}
-//           onChange={(e) => setManualInput(e.target.value)}
-//         />
-//         <button type="submit" className="btn btn-primary erp-btn px-4" disabled={!manualInput}>Lookup</button>
-//       </form>
-
-//       {/* STATUS MESSAGES */}
-//       {status.text && (
-//         <div className={`alert erp-alert py-2 fw-bold ${getAlertClass(status.type)}`}>
-//           {status.text}
-//         </div>
-//       )}
-
-//       {/* DETECTED ITEM INFO */}
-//       {currentItem && (
-//         <div className="alert alert-success d-flex flex-column mb-3 py-2 border-success">
-//           <div className="d-flex justify-content-between align-items-center">
-//              <span className="fw-bold font-monospace fs-5">{currentItem.itemCode}</span>
-//              <span className="badge bg-success">Detected</span>
-//           </div>
-//           <span className="small text-dark mt-1">{currentItem.description}</span>
-//           {currentPoLine && (
-//             <div className="mt-2 pt-2 border-top border-success d-flex justify-content-between small fw-bold">
-//               <span>PO Target Matched</span>
-//               <span>Pending: {currentPoLine.pendingQty}</span>
-//             </div>
-//           )}
-//         </div>
-//       )}
-
-//       {/* TRANSACTION FORM */}
-//       <div className="row g-2 mb-3 flex-grow-1">
-//         <div className="col-6">
-//           <label className="erp-label">Warehouse</label>
-//           <select className="form-select erp-input" value={txForm.warehouseId} onChange={(e) => setTxForm({ ...txForm, warehouseId: e.target.value })} disabled={poMode}>
-//             <option value="">-- Select --</option>
-//             {warehouses.map((w) => (
-//               <option key={w.id} value={w.id}>{w.name}</option>
-//             ))}
-//           </select>
-//         </div>
-//         <div className="col-6">
-//           <label className="erp-label">Lot (For OUT)</label>
-//           <select className="form-select erp-input" value={txForm.lotId} onChange={(e) => setTxForm({ ...txForm, lotId: e.target.value })} disabled={lotsLoading}>
-//             <option value="">{lotsLoading ? 'Loading...' : '-- Select --'}</option>
-//             {availableLots.filter((lot) => lot.lotId !== null && lot.quantity > 0).map((lot) => (
-//               <option key={`${lot.lotId}-${lot.lotNumber}`} value={lot.lotId}>
-//                 {lot.lotNumber || 'General'} (Qty: {lot.quantity})
-//               </option>
-//             ))}
-//           </select>
-//         </div>
-//         <div className="col-6">
-//           <label className="erp-label">Lot Number (For IN)</label>
-//           <input type="text" className="form-control erp-input font-monospace" placeholder="Auto-generated if empty" value={txForm.lotNumber} onChange={(e) => setTxForm({ ...txForm, lotNumber: e.target.value })} />
-//         </div>
-//         <div className="col-6">
-//           <label className="erp-label">Quantity</label>
-//           <input type="number" className="form-control erp-input font-monospace fw-bold text-primary" placeholder="0" value={txForm.quantity} onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })} min="1" />
-//         </div>
-//       </div>
-
-//       {/* ACTION BUTTONS */}
-//       <div className="d-flex gap-2 mt-auto pt-3 border-top">
-//         <button type="button" className="btn btn-success erp-btn w-100 fw-bold py-2" onClick={handleStockIn} disabled={loading}>
-//           {loading ? 'Processing...' : '📥 RECEIVE (IN)'}
-//         </button>
-//         <button type="button" className="btn btn-danger erp-btn w-100 fw-bold py-2" onClick={handleStockOut} disabled={loading || poMode}>
-//           {loading ? 'Processing...' : '📤 DISPATCH (OUT)'}
-//         </button>
-//       </div>
-
-//       <style>{`
-//         /* Scanner Specific Animations & Adjustments */
-//         .scanner-laser {
-//           animation: scan 2s infinite linear;
-//         }
-//         @keyframes scan {
-//           0% { transform: translateY(-80px); }
-//           50% { transform: translateY(80px); }
-//           100% { transform: translateY(-80px); }
-//         }
-        
-//         .erp-alert {
-//           border-radius: 4px;
-//           box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-//         }
-//       `}</style>
-//     </div>
-//   );
-// }
-
-
-// import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-// import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
-// import api from '../services/apiClient';
-
-// const SCAN_COOLDOWN_MS = 2000;
-
-// export default function MobileScanner({
-//   items = [],
-//   warehouses = [],
-//   inventory = [],
-//   fetchData = () => {},
-//   onScanDetected = () => {}
-// }) {
-//   const videoRef = useRef(null);
-//   const codeReaderRef = useRef(null);
-//   const lastScan = useRef({ barcode: '', timestamp: 0 });
-
-//   // Camera & Global States
-//   const [cameraActive, setCameraActive] = useState(false);
-//   const [cameraError, setCameraError] = useState('');
-//   const [manualInput, setManualInput] = useState('');
-//   const [status, setStatus] = useState({ type: '', text: '' });
-//   const [currentItem, setCurrentItem] = useState(null);
-//   const [detectedBarcode, setDetectedBarcode] = useState('');
-//   const [lastScannedBarcode, setLastScannedBarcode] = useState('');
-//   const [loading, setLoading] = useState(false);
-  
-//   // Transaction Protocol States
-//   const [txMode, setTxMode] = useState('in'); // 'in', 'out', 'transfer', 'po'
-//   const [txForm, setTxForm] = useState({
-//     itemId: '',
-//     warehouseId: '',
-//     destWarehouseId: '',
-//     lotId: '',
-//     quantity: '',
-//     lotNumber: ''
-//   });
-
-//   // PO Specific States
-//   const [poLoading, setPoLoading] = useState(false);
-//   const [poList, setPoList] = useState([]);
-//   const [selectedPoNumber, setSelectedPoNumber] = useState('');
-//   const [currentPoLine, setCurrentPoLine] = useState(null);
-//   const selectedPo = useMemo(
-//     () => poList.find((po) => po.poNumber === selectedPoNumber) ?? null,
-//     [poList, selectedPoNumber]
-//   );
-
-//   // Lot Specific States
-//   const [availableLots, setAvailableLots] = useState([]);
-//   const [lotsLoading, setLotsLoading] = useState(false);
-
-//   // Serial Generation Modal States
-//   const [showSerialModal, setShowSerialModal] = useState(false);
-//   const [serialGenerationForm, setSerialGenerationForm] = useState({
-//     itemId: '',
-//     quantity: 0,
-//     generatedSerials: []
-//   });
-
-//   const showStatus = useCallback((type, text) => {
-//     setStatus({ type, text });
-//     setTimeout(() => setStatus({ type: '', text: '' }), 4000);
-//   }, []);
-
-//   const findBackCamera = useCallback(async () => {
-//     if (!navigator?.mediaDevices?.enumerateDevices) return undefined;
-//     try {
-//       const devices = await navigator.mediaDevices.enumerateDevices();
-//       const videoDevices = devices.filter((device) => device.kind === 'videoinput');
-//       const backCamera = videoDevices.find((device) =>
-//         /(back|rear|environment)/i.test(device.label || '')
-//       );
-//       return backCamera?.deviceId ?? videoDevices[0]?.deviceId;
-//     } catch (error) {
-//       console.error('Camera enumeration failed', error);
-//       return undefined;
-//     }
-//   }, []);
-
-//   const recordBarcodeScan = useCallback((barcode) => {
-//     const previousBarcode = lastScannedBarcode;
-//     setTxForm((prev) => {
-//       const prevQty = parseInt(prev.quantity, 10) || 0;
-//       const nextQty = barcode === previousBarcode ? prevQty + 1 : 1;
-//       return { ...prev, quantity: String(nextQty) };
-//     });
-//     setLastScannedBarcode(barcode);
-//   }, [lastScannedBarcode]);
-
-//   const resetScanState = useCallback(() => {
-//     setLastScannedBarcode('');
-//     setDetectedBarcode('');
-//     setCurrentItem(null);
-//     setCurrentPoLine(null);
-//     setTxForm(prev => ({...prev, itemId: '', quantity: '', lotNumber: '', lotId: '', warehouseId: ''}));
-//     setAvailableLots([]);
-//   }, []);
-
-//   const scannerItemId = parseInt(txForm.itemId, 10);
-//   const scannerWarehouseId = parseInt(txForm.warehouseId, 10);
-
-//   const loadAvailableLots = useCallback(async () => {
-//     if (!scannerItemId || !scannerWarehouseId) {
-//       setAvailableLots([]);
-//       return;
-//     }
-//     setLotsLoading(true);
-//     try {
-//       const res = await api.get('/stock/lots', {
-//         params: { itemId: scannerItemId, warehouseId: scannerWarehouseId }
-//       });
-//       const normalized = (res.data || []).map((lot) => ({
-//         lotId: lot.lotId ?? lot.LotId ?? null,
-//         lotNumber: lot.lotNumber ?? lot.LotNumber ?? 'General',
-//         quantity: Number(lot.quantity ?? lot.Quantity ?? 0)
-//       }));
-//       setAvailableLots(normalized);
-//     } catch (error) {
-//       setAvailableLots([]);
-//     } finally {
-//       setLotsLoading(false);
-//     }
-//   }, [scannerItemId, scannerWarehouseId]);
-
-//   // Auto-select lot when lots are loaded for OUT or TRANSFER
-//   useEffect(() => {
-//     if (availableLots.length > 0 && (txMode === 'out' || txMode === 'transfer')) {
-//       const validLot = availableLots.find(l => l.quantity > 0);
-//       if (validLot && !txForm.lotId) {
-//         setTxForm(prev => ({ ...prev, lotId: String(validLot.lotId) }));
-//       }
-//     }
-//   }, [availableLots, txMode, txForm.lotId]);
-
-//   useEffect(() => {
-//     loadAvailableLots();
-//   }, [loadAvailableLots]);
-
-//   const loadPendingPurchaseOrders = useCallback(async () => {
-//     setPoLoading(true);
-//     try {
-//       const response = await api.get('/purchase-orders/pending');
-//       const list = response.data || [];
-//       setPoList(list);
-//       const hasSelection = selectedPoNumber && list.some((po) => po.poNumber === selectedPoNumber);
-//       if (!hasSelection) {
-//         setSelectedPoNumber(list[0]?.poNumber ?? '');
-//       }
-//     } catch (error) {
-//       setPoList([]);
-//       setSelectedPoNumber('');
-//     } finally {
-//       setPoLoading(false);
-//     }
-//   }, [selectedPoNumber]);
-
-//   // Load POs if we switch to PO mode
-//   useEffect(() => {
-//     if (txMode === 'po') {
-//       void loadPendingPurchaseOrders();
-//     }
-//   }, [txMode, loadPendingPurchaseOrders]);
-
-//   const stopCamera = useCallback(() => {
-//     try {
-//       codeReaderRef.current?.reset();
-//     } catch (error) {
-//       console.error('Camera cleanup failed', error);
-//     }
-//     setCameraActive(false);
-//   }, []);
-
-//   const resolveBarcode = useCallback(
-//     async (barcodeValue) => {
-//       const trimmed = (barcodeValue || '').trim();
-//       if (!trimmed) return null;
-      
-//       setCurrentItem(null);
-//       setCurrentPoLine(null);
-//       setDetectedBarcode(trimmed);
-//       let allowScanRecording = true;
-      
-//       try {
-//         const response = await api.get(`/items/barcode/${encodeURIComponent(trimmed)}`);
-//         const payload = response.data;
-        
-//         // Auto-detect Warehouse from inventory payload, fallback to first available
-//         const autoWarehouseId = payload.inventory?.warehouseId ?? warehouses[0]?.id ?? '';
-        
-//         setCurrentItem({
-//           itemId: payload.itemId,
-//           itemCode: payload.itemCode,
-//           description: payload.itemName,
-//           serialPrefix: payload.serialPrefix
-//         });
-        
-//         setTxForm((prev) => ({
-//           ...prev,
-//           itemId: String(payload.itemId),
-//           warehouseId: String(autoWarehouseId),
-//           lotId: payload.inventory?.lotId ? String(payload.inventory.lotId) : prev.lotId
-//         }));
-
-//         // Handle PO Mode Specific Validations
-//         if (txMode === 'po') {
-//           if (!selectedPo) {
-//             showStatus('warning', 'Select a PO before scanning items.');
-//             allowScanRecording = false;
-//           } else {
-//             const match = selectedPo.lines.find((line) => line.itemId === payload.itemId);
-//             if (!match) {
-//               showStatus('error', `${payload.itemCode} is not part of PO ${selectedPo.poNumber}`);
-//               allowScanRecording = false;
-//             } else {
-//               setCurrentPoLine(match);
-//               setTxForm((prev) => ({ ...prev, warehouseId: String(match.warehouseId) }));
-//               showStatus('info', `PO Matched: Pending ${match.pendingQty}`);
-//             }
-//           }
-//         } else {
-//           const statusType = payload.isNew ? 'info' : 'success';
-//           const statusMessage = payload.isNew 
-//             ? `New item created (${payload.itemCode})` 
-//             : `Detected: ${payload.itemCode} at Location`;
-//           showStatus(statusType, statusMessage);
-//         }
-        
-//         onScanDetected({
-//           itemId: payload.itemId,
-//           warehouseId: autoWarehouseId,
-//           lotId: payload.inventory?.lotId ?? null,
-//           lotNumber: payload.inventory?.lotNumber ?? ''
-//         });
-        
-//         stopCamera();
-//         fetchData();
-        
-//         if (allowScanRecording) {
-//           recordBarcodeScan(trimmed);
-//         }
-//         return payload;
-//       } catch (err) {
-//         console.error('Barcode lookup failed', err);
-//         showStatus('error', err?.response?.status === 404 ? 'Item not found in catalog' : 'Failed to resolve barcode');
-//         return null;
-//       }
-//     },
-//     [onScanDetected, showStatus, warehouses, recordBarcodeScan, txMode, selectedPo, stopCamera, fetchData]
-//   );
-
-//   const handleDetectedCode = useCallback(async (code) => {
-//     const trimmed = (code || '').trim();
-//     if (!trimmed) return;
-//     const now = Date.now();
-//     if (
-//       trimmed !== lastScan.current.barcode ||
-//       now - lastScan.current.timestamp >= SCAN_COOLDOWN_MS
-//     ) {
-//       lastScan.current = { barcode: trimmed, timestamp: now };
-//       await resolveBarcode(trimmed);
-//     }
-//   }, [resolveBarcode]);
-
-//   const handleManualSubmit = async (e) => {
-//     e.preventDefault();
-//     if (!manualInput) return;
-//     await handleDetectedCode(manualInput);
-//     setManualInput('');
-//   };
-
-//   const startCamera = useCallback(async () => {
-//     if (!videoRef.current) return;
-//     setCameraError('');
-//     try {
-//       if (codeReaderRef.current) {
-//         codeReaderRef.current.reset();
-//       } else {
-//         codeReaderRef.current = new BrowserMultiFormatReader();
-//       }
-
-//       const deviceId = await findBackCamera();
-
-//       codeReaderRef.current
-//         .decodeFromVideoDevice(
-//           deviceId ?? undefined,
-//           videoRef.current,
-//           (result, error) => {
-//             if (result) handleDetectedCode(result.getText());
-//             if (error && !(error instanceof NotFoundException)) {
-//               console.error('Decode error', error);
-//             }
-//           }
-//         )
-//         .catch((err) => {
-//           console.error('Camera error:', err);
-//           setCameraError(`Camera unavailable: ${err.message}`);
-//           setCameraActive(false);
-//           showStatus('warning', 'Camera denied – using manual entry');
-//         });
-
-//       setCameraActive(true);
-//       showStatus('success', 'Camera ready – point at a barcode');
-//     } catch (err) {
-//       console.error('Start camera failed', err);
-//       setCameraError(`Camera unavailable: ${err.message}`);
-//       setCameraActive(false);
-//       showStatus('warning', 'Camera denied – use manual entry');
-//     }
-//   }, [handleDetectedCode, showStatus, findBackCamera]);
-
-//   useEffect(() => {
-//     void startCamera();
-//     return stopCamera;
-//   }, [startCamera, stopCamera]);
-
-//   // --- TRANSACTION LOGIC ---
-//   const handleStockTransaction = async (e) => {
-//     e?.preventDefault();
-//     if (!txForm.itemId || !txForm.warehouseId || !txForm.quantity) {
-//       return showStatus('error', 'Provide valid item, warehouse, and quantity');
-//     }
-
-//     const requestedQty = parseFloat(txForm.quantity);
-
-//     setLoading(true);
-//     try {
-//       let endpoint = '';
-//       let payload = {
-//         itemId: parseInt(txForm.itemId, 10),
-//         warehouseId: parseInt(txForm.warehouseId, 10),
-//         quantity: requestedQty,
-//       };
-
-//       if (txMode === 'po') {
-//         if (!selectedPo || !currentPoLine) return showStatus('error', 'Valid PO and PO Line required');
-//         if (requestedQty > currentPoLine.pendingQty) return showStatus('error', 'Quantity exceeds PO pending amount');
-        
-//         endpoint = '/purchase-orders/receive';
-//         payload.poId = selectedPo.id;
-//         payload.lotNumber = txForm.lotNumber?.trim() || `LOT-${Date.now().toString().slice(-6)}`;
-//         payload.scannerDeviceId = 'MOBILE-SCAN';
-//       } 
-//       else if (txMode === 'in') {
-//         endpoint = '/stock/in';
-//         payload.lotNumber = txForm.lotNumber?.trim() || null;
-//         if (serialGenerationForm.generatedSerials.length > 0) {
-//           payload.serialNumbers = serialGenerationForm.generatedSerials.map(s => s.serialNumber);
-//         }
-//       } 
-//       else if (txMode === 'out') {
-//         if (!txForm.lotId) return showStatus('error', 'Source lot required for dispatch');
-//         endpoint = '/stock/out';
-//         payload.lotId = parseInt(txForm.lotId, 10);
-//       } 
-//       else if (txMode === 'transfer') {
-//         if (!txForm.lotId || !txForm.destWarehouseId) return showStatus('error', 'Lot and Dest Warehouse required');
-//         endpoint = '/stock/transfer';
-//         payload.lotId = parseInt(txForm.lotId, 10);
-//         payload.destinationWarehouseId = parseInt(txForm.destWarehouseId, 10);
-//       }
-
-//       const response = await api.post(endpoint, payload);
-//       const message = response.data?.message || `Stock ${txMode.toUpperCase()} recorded`;
-//       showStatus('success', message);
-      
-//       // Cleanup after success
-//       resetScanState();
-//       setSerialGenerationForm({ itemId: '', quantity: 0, generatedSerials: [] });
-//       setShowSerialModal(false);
-//       fetchData();
-//       if (txMode === 'po') void loadPendingPurchaseOrders();
-//       void startCamera();
-      
-//     } catch (err) {
-//       console.error(`Stock ${txMode} failed`, err);
-//       showStatus('error', err.response?.data?.message || err.response?.data || `Stock ${txMode.toUpperCase()} failed`);
-//     } finally {
-//       setLoading(false);
-//     }
-//   };
-
-//   const openSerialGenerationModal = () => {
-//     if (!txForm.itemId || !txForm.warehouseId || !txForm.quantity || parseFloat(txForm.quantity) <= 0) {
-//       return showStatus('error', 'Scan item and enter valid quantity first');
-//     }
-//     setSerialGenerationForm({
-//       itemId: txForm.itemId,
-//       quantity: parseFloat(txForm.quantity),
-//       generatedSerials: []
-//     });
-//     setShowSerialModal(true);
-//   };
-
-//   const generateSerialNumbers = () => {
-//     const qty = serialGenerationForm.quantity;
-//     if (qty <= 0 || qty > 100) {
-//       return showStatus('warning', 'Serial generation limited to 1-100 units per batch');
-//     }
-    
-//     const prefix = currentItem?.serialPrefix || `SN-${currentItem?.itemCode || 'ITEM'}`;
-//     const timestamp = Date.now().toString().slice(-4);
-//     const serials = Array.from({ length: qty }, (_, i) => ({
-//       serialNumber: `${prefix}-${timestamp}-${String(i + 1).padStart(4, '0')}`
-//     }));
-
-//     setSerialGenerationForm(prev => ({ ...prev, generatedSerials: serials }));
-//   };
-
-//   const confirmStockTransactionWithSerials = () => {
-//     handleStockTransaction();
-//   };
-
-//   const getAlertClass = (type) => {
-//     if (type === 'success') return 'alert-success border-success text-success';
-//     if (type === 'error') return 'alert-danger border-danger text-danger';
-//     if (type === 'warning') return 'alert-warning border-warning text-warning';
-//     return 'alert-info border-info text-info';
-//   };
-
-//   return (
-//     <div className="bg-white p-3 p-md-4 h-100 d-flex flex-column">
-      
-//       {/* CAMERA VIEWFINDER */}
-//       <div className="position-relative bg-dark rounded-3 overflow-hidden shadow-sm mb-3" style={{ minHeight: '220px' }}>
-//         <video ref={videoRef} className="w-100 h-100 object-fit-cover" autoPlay muted playsInline />
-        
-//         {/* Scanner Overlay */}
-//         <div className="position-absolute top-0 start-0 w-100 h-100 d-flex flex-column align-items-center justify-content-center" style={{ pointerEvents: 'none' }}>
-//           <div className="scanner-laser" style={{ width: '70%', height: '2px', backgroundColor: '#10b981', boxShadow: '0 0 10px #10b981' }}></div>
-//           <div className="text-white fw-bold mt-3 px-3 py-1 rounded" style={{ backgroundColor: 'rgba(0,0,0,0.5)', fontSize: '0.8rem' }}>
-//             {cameraActive ? 'Point camera at barcode' : 'Initializing camera...'}
-//           </div>
-//         </div>
-//       </div>
-
-//       {cameraError && <div className="alert alert-danger py-2 small fw-bold">⚠️ {cameraError}</div>}
-
-//       {/* MANUAL INPUT */}
-//       <form onSubmit={handleManualSubmit} className="d-flex gap-2 mb-3">
-//         <input
-//           type="text"
-//           className="form-control erp-input font-monospace"
-//           placeholder="Manual barcode entry..."
-//           value={manualInput}
-//           onChange={(e) => setManualInput(e.target.value)}
-//         />
-//         <button type="submit" className="btn btn-primary erp-btn px-4" disabled={!manualInput}>Lookup</button>
-//       </form>
-
-//       {/* STATUS MESSAGES */}
-//       {status.text && (
-//         <div className={`alert erp-alert py-2 fw-bold ${getAlertClass(status.type)}`}>
-//           {status.text}
-//         </div>
-//       )}
-
-//       {/* INVENTORY MOVEMENT PROTOCOL */}
-//       <div className="erp-panel shadow-sm flex-grow-1 d-flex flex-column mb-3">
-//         <div className="erp-panel-header d-flex justify-content-between align-items-center bg-light">
-//           <span>Inventory Movement Protocol</span>
-//         </div>
-//         <div className="p-3 bg-white flex-grow-1 d-flex flex-column">
-          
-//           {/* MODE SELECTOR */}
-//           <div className="btn-group w-100 mb-3 shadow-sm flex-wrap" role="group">
-//             <button 
-//               type="button" 
-//               className={`btn erp-btn ${txMode === 'in' ? 'btn-success fw-bold' : 'btn-light border'}`}
-//               onClick={() => { setTxMode('in'); resetScanState(); }}
-//             >
-//               📥 IN
-//             </button>
-//             <button 
-//               type="button" 
-//               className={`btn erp-btn ${txMode === 'out' ? 'btn-danger fw-bold' : 'btn-light border'}`}
-//               onClick={() => { setTxMode('out'); resetScanState(); }}
-//             >
-//               📤 OUT
-//             </button>
-//             <button 
-//               type="button" 
-//               className={`btn erp-btn ${txMode === 'transfer' ? 'btn-warning fw-bold' : 'btn-light border'}`}
-//               onClick={() => { setTxMode('transfer'); resetScanState(); }}
-//             >
-//               🔁 XFER
-//             </button>
-//             <button 
-//               type="button" 
-//               className={`btn erp-btn ${txMode === 'po' ? 'btn-primary fw-bold' : 'btn-light border'}`}
-//               onClick={() => { setTxMode('po'); resetScanState(); }}
-//             >
-//               📦 PO RECV
-//             </button>
-//           </div>
-
-//           {/* DETECTED ITEM CONTEXT (Replaces Manual Select) */}
-//           <div className="mb-3">
-//             <label className="erp-label">Detected Item Context</label>
-//             {currentItem ? (
-//               <div className="p-3 bg-light border border-success rounded d-flex justify-content-between align-items-center shadow-sm">
-//                 <div>
-//                   <div className="fw-bold font-monospace text-dark fs-5">{currentItem.itemCode}</div>
-//                   <div className="text-muted small">{currentItem.description}</div>
-//                 </div>
-//                 <button className="btn btn-sm btn-outline-danger erp-btn" onClick={resetScanState}>Clear</button>
-//               </div>
-//             ) : (
-//               <div className="p-3 bg-light border border-warning rounded text-center text-muted small shadow-sm">
-//                  Please scan a barcode or enter it manually to set the active item context.
-//               </div>
-//             )}
-//           </div>
-
-//           {/* PO CONTEXT (Only visible in PO Mode) */}
-//           {txMode === 'po' && (
-//             <div className="p-3 mb-3 bg-light border rounded shadow-sm">
-//               <div className="d-flex justify-content-between align-items-center mb-2">
-//                 <label className="erp-label m-0">Target Purchase Order <span className="text-danger">*</span></label>
-//                 {poLoading && <div className="spinner-border spinner-border-sm text-primary"></div>}
-//               </div>
-//               <select
-//                 className="form-select erp-input font-monospace mb-2"
-//                 value={selectedPoNumber}
-//                 onChange={(e) => {
-//                   setSelectedPoNumber(e.target.value);
-//                   setCurrentPoLine(null);
-//                 }}
-//               >
-//                 <option value="">-- Select Pending PO --</option>
-//                 {poList.map((po) => (
-//                   <option key={po.poNumber} value={po.poNumber}>
-//                     {po.poNumber} ({po.totalPending.toFixed(0)} units pending)
-//                   </option>
-//                 ))}
-//               </select>
-              
-//               {currentPoLine && (
-//                 <div className="d-flex justify-content-between align-items-center bg-white p-2 border rounded small border-success">
-//                   <span className="text-muted fw-bold">Matched PO Line:</span>
-//                   <span className="fw-bold text-success">Pending Qty: {currentPoLine.pendingQty}</span>
-//                 </div>
-//               )}
-//             </div>
-//           )}
-
-//           {/* FORM GRID (Enabled only if item is scanned) */}
-//           <fieldset disabled={!currentItem}>
-//             <form onSubmit={(e) => e.preventDefault()}>
-//               <div className="row g-2 mb-3">
-//                 <div className="col-12">
-//                   <label className="erp-label">Active Warehouse <span className="text-danger">*</span></label>
-//                   <select className="form-select erp-input" value={txForm.warehouseId} onChange={(e) => setTxForm({ ...txForm, warehouseId: e.target.value })} disabled={txMode === 'po'}>
-//                     <option value="">-- Select Location --</option>
-//                     {warehouses.map((warehouse) => (
-//                       <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
-//                     ))}
-//                   </select>
-//                 </div>
-//               </div>
-
-//               <div className="row g-2 mb-3">
-//                 <div className="col-4">
-//                   <label className="erp-label">Qty <span className="text-danger">*</span></label>
-//                   <input type="number" className="form-control erp-input font-monospace text-end" value={txForm.quantity} onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })} min="0" placeholder="0" />
-//                 </div>
-
-//                 {/* Dynamic Lot Fields */}
-//                 {txMode === 'in' || txMode === 'po' ? (
-//                   <div className="col-8">
-//                     <label className="erp-label">Assign Lot / Batch Number</label>
-//                     <input type="text" className="form-control erp-input font-monospace" value={txForm.lotNumber} onChange={(e) => setTxForm({ ...txForm, lotNumber: e.target.value })} placeholder="Auto-generated if empty" />
-//                   </div>
-//                 ) : (
-//                   <div className="col-8">
-//                     <label className="erp-label">Select Source Lot <span className="text-danger">*</span></label>
-//                     <select className="form-select erp-input font-monospace" value={txForm.lotId} onChange={(e) => setTxForm({ ...txForm, lotId: e.target.value })} disabled={lotsLoading}>
-//                       <option value="">{lotsLoading ? 'Loading...' : '-- Choose Active Lot --'}</option>
-//                       {availableLots.filter(l => l.quantity > 0).map((lot) => (
-//                         <option key={`${lot.lotId}-${lot.lotNumber}`} value={lot.lotId}>
-//                           {lot.lotNumber || 'UNASSIGNED'} (Avail: {lot.quantity})
-//                         </option>
-//                       ))}
-//                     </select>
-//                   </div>
-//                 )}
-//               </div>
-
-//               {/* Transfer specific fields */}
-//               {txMode === 'transfer' && (
-//                 <div className="row g-2 mb-3 p-2 bg-light border rounded">
-//                   <div className="col-12">
-//                     <label className="erp-label text-warning">Destination Warehouse <span className="text-danger">*</span></label>
-//                     <select className="form-select erp-input" value={txForm.destWarehouseId} onChange={(e) => setTxForm({ ...txForm, destWarehouseId: e.target.value })}>
-//                       <option value="">-- Select Destination Bin --</option>
-//                       {warehouses
-//                         .filter((warehouse) => warehouse.id !== parseInt(txForm.warehouseId, 10))
-//                         .map((warehouse) => (
-//                           <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
-//                         ))}
-//                     </select>
-//                   </div>
-//                 </div>
-//               )}
-
-//               <div className="d-flex justify-content-end pt-3 border-top mt-auto">
-//                 <button
-//                   type="button"
-//                   onClick={(e) => (txMode === 'in' ? openSerialGenerationModal() : handleStockTransaction(e))}
-//                   disabled={loading || !txForm.itemId || !txForm.warehouseId || !txForm.quantity || (txMode === 'po' && !currentPoLine)}
-//                   className={`btn erp-btn w-100 py-2 fw-bold ${txMode === 'in' ? 'btn-success' : txMode === 'out' ? 'btn-danger' : txMode === 'transfer' ? 'btn-warning text-dark' : 'btn-primary'}`}
-//                 >
-//                   {loading ? 'PROCESSING...' : txMode === 'in' ? 'RECEIVE & GEN SERIALS' : txMode === 'out' ? 'EXECUTE DISPATCH' : txMode === 'transfer' ? 'EXECUTE TRANSFER' : 'RECEIVE PO STOCK'}
-//                 </button>
-//               </div>
-//             </form>
-//           </fieldset>
-//         </div>
-//       </div>
-
-//       {/* SERIAL GENERATION MODAL */}
-//       {showSerialModal && (
-//         <div className="erp-modal-overlay">
-//           <div className="erp-dialog erp-dialog-md w-100 m-3">
-//             <div className="erp-dialog-header">
-//               <h6 className="m-0 fw-bold">Serial Number Allocation</h6>
-//               <button className="btn-close btn-close-white" onClick={() => setShowSerialModal(false)}></button>
-//             </div>
-//             <div className="erp-dialog-body p-3 bg-white">
-//               <div className="d-flex justify-content-between align-items-center mb-3 p-2 bg-light border rounded">
-//                 <div>
-//                   <span className="erp-label m-0">Inbound Qty</span>
-//                   <span className="fs-5 fw-bold font-monospace text-success">{serialGenerationForm.quantity}</span>
-//                 </div>
-//                 <button className="btn btn-sm btn-outline-primary fw-bold erp-btn" onClick={generateSerialNumbers}>
-//                   + Generate
-//                 </button>
-//               </div>
-
-//               {serialGenerationForm.generatedSerials.length > 0 ? (
-//                 <div className="border rounded overflow-hidden" style={{ maxHeight: '200px', overflowY: 'auto' }}>
-//                   <table className="table table-sm table-striped m-0 font-monospace" style={{ fontSize: '0.8rem' }}>
-//                     <thead className="table-light sticky-top">
-//                       <tr>
-//                         <th className="ps-3 text-uppercase text-muted">S/N</th>
-//                         <th className="text-uppercase text-muted">Identifier</th>
-//                       </tr>
-//                     </thead>
-//                     <tbody>
-//                       {serialGenerationForm.generatedSerials.map((s, i) => (
-//                         <tr key={i}>
-//                           <td className="ps-3 text-muted">{i + 1}</td>
-//                           <td className="fw-bold">{s.serialNumber}</td>
-//                         </tr>
-//                       ))}
-//                     </tbody>
-//                   </table>
-//                 </div>
-//               ) : (
-//                 <div className="text-center py-4 text-muted small border rounded bg-light">
-//                   Click generate to create unique serials based on item prefix.
-//                 </div>
-//               )}
-//             </div>
-//             <div className="p-3 bg-light border-top d-flex justify-content-end gap-2">
-//               <button className="btn btn-light border erp-btn" onClick={() => setShowSerialModal(false)}>Cancel</button>
-//               <button 
-//                 className="btn btn-primary erp-btn px-4" 
-//                 onClick={confirmStockTransactionWithSerials}
-//                 disabled={serialGenerationForm.generatedSerials.length === 0 || loading}
-//               >
-//                 {loading ? 'Saving...' : 'Commit to Ledger'}
-//               </button>
-//             </div>
-//           </div>
-//         </div>
-//       )}
-
-//       <style>{`
-//         /* --- ERP THEME CSS --- */
-//         :root {
-//           --erp-primary: #0f4c81;
-//           --erp-bg: #eef2f5;
-//           --erp-surface: #ffffff;
-//           --erp-border: #cfd8dc;
-//           --erp-text-main: #263238;
-//           --erp-text-muted: #607d8b;
-//         }
-        
-//         .erp-panel {
-//           background: var(--erp-surface);
-//           border: 1px solid var(--erp-border);
-//           border-radius: 4px;
-//           overflow: hidden;
-//         }
-//         .erp-panel-header {
-//           border-bottom: 1px solid var(--erp-border);
-//           padding: 10px 12px;
-//           font-size: 0.85rem;
-//           text-transform: uppercase;
-//           letter-spacing: 0.5px;
-//           color: #34495e;
-//           font-weight: bold;
-//         }
-
-//         .erp-input {
-//           border-radius: 3px;
-//           border-color: #b0bec5;
-//           font-size: 0.85rem;
-//           padding: 6px 10px;
-//         }
-//         .erp-input:focus {
-//           border-color: var(--erp-primary);
-//           box-shadow: 0 0 0 2px rgba(15, 76, 129, 0.2);
-//         }
-//         .erp-btn {
-//           border-radius: 3px;
-//           font-weight: 600;
-//           letter-spacing: 0.2px;
-//           font-size: 0.85rem;
-//           padding: 8px 12px;
-//         }
-//         .erp-label {
-//           font-size: 0.7rem;
-//           font-weight: 700;
-//           color: var(--erp-text-muted);
-//           text-transform: uppercase;
-//           margin-bottom: 4px;
-//           display: block;
-//         }
-
-//         /* Scanner Specific Animations */
-//         .scanner-laser {
-//           animation: scan 2s infinite linear;
-//         }
-//         @keyframes scan {
-//           0% { transform: translateY(-80px); }
-//           50% { transform: translateY(80px); }
-//           100% { transform: translateY(-80px); }
-//         }
-        
-//         .erp-alert {
-//           border-radius: 4px;
-//           box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-//         }
-        
-//         /* Modals */
-//         .erp-modal-overlay {
-//           position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-//           background: rgba(38, 50, 56, 0.6);
-//           display: flex; align-items: center; justify-content: center;
-//           z-index: 1050;
-//         }
-//         .erp-dialog {
-//           background: var(--erp-surface);
-//           border-radius: 4px;
-//           box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-//           width: 100%;
-//           max-height: 90vh;
-//           display: flex;
-//           flex-direction: column;
-//           overflow: hidden;
-//           animation: modalFadeIn 0.2s ease-out;
-//         }
-//         @keyframes modalFadeIn {
-//           from { opacity: 0; transform: translateY(-10px); }
-//           to { opacity: 1; transform: translateY(0); }
-//         }
-//         .erp-dialog-md { max-width: 450px; }
-//         .erp-dialog-header {
-//           background-color: var(--erp-primary);
-//           color: white;
-//           padding: 12px 16px;
-//           display: flex; justify-content: space-between; align-items: center;
-//         }
-//       `}</style>
-//     </div>
-//   );
-// }
-
-
-
-
-// import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-// import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
-// import api from '../services/apiClient';
-
-// const SCAN_COOLDOWN_MS = 2000;
-
-// export default function MobileScanner({
-//   items = [],
-//   warehouses = [],
-//   inventory = [],
-//   fetchData = () => {},
-//   onScanDetected = () => {}
-// }) {
-//   const videoRef = useRef(null);
-//   const codeReaderRef = useRef(null);
-//   const lastScan = useRef({ barcode: '', timestamp: 0 });
-
-//   // Camera & Global States
-//   const [cameraActive, setCameraActive] = useState(false);
-//   const [cameraError, setCameraError] = useState('');
-//   const [manualInput, setManualInput] = useState('');
-//   const [status, setStatus] = useState({ type: '', text: '' });
-//   const [currentItem, setCurrentItem] = useState(null);
-//   const [detectedBarcode, setDetectedBarcode] = useState('');
-//   const [lastScannedBarcode, setLastScannedBarcode] = useState('');
-//   const [loading, setLoading] = useState(false);
-  
-//   // Navigation & Modes
+//   // --- Navigation & Modes ---
 //   const [activeTab, setActiveTab] = useState('stock'); // 'stock' or 'po'
 //   const [txMode, setTxMode] = useState('in'); // 'in', 'out', 'transfer'
   
@@ -2265,7 +59,7 @@
 //     lotNumber: ''
 //   });
 
-//   // PO Specific States
+//   // --- PO States ---
 //   const [poLoading, setPoLoading] = useState(false);
 //   const [poList, setPoList] = useState([]);
 //   const [filteredPoList, setFilteredPoList] = useState([]);
@@ -2276,18 +70,16 @@
 //     [poList, selectedPoNumber]
 //   );
 
-//   // Lot Specific States
+//   // --- Lot States ---
 //   const [availableLots, setAvailableLots] = useState([]);
 //   const [lotsLoading, setLotsLoading] = useState(false);
 
-//   // Serial Generation Modal States
-//   const [showSerialModal, setShowSerialModal] = useState(false);
-//   const [serialGenerationForm, setSerialGenerationForm] = useState({
-//     itemId: '',
-//     quantity: 0,
-//     generatedSerials: []
-//   });
+//   // --- Master Data Creation States (404 Intercept) ---
+//   const [showCreateForm, setShowCreateForm] = useState(false);
+//   const [productForm, setProductForm] = useState(createEmptyProductForm());
+//   const [createLoading, setCreateLoading] = useState(false);
 
+//   // --- Helper Functions ---
 //   const showStatus = useCallback((type, text) => {
 //     setStatus({ type, text });
 //     setTimeout(() => setStatus({ type: '', text: '' }), 4000);
@@ -2298,25 +90,13 @@
 //     try {
 //       const devices = await navigator.mediaDevices.enumerateDevices();
 //       const videoDevices = devices.filter((device) => device.kind === 'videoinput');
-//       const backCamera = videoDevices.find((device) =>
-//         /(back|rear|environment)/i.test(device.label || '')
-//       );
+//       const backCamera = videoDevices.find((device) => /(back|rear|environment)/i.test(device.label || ''));
 //       return backCamera?.deviceId ?? videoDevices[0]?.deviceId;
 //     } catch (error) {
 //       console.error('Camera enumeration failed', error);
 //       return undefined;
 //     }
 //   }, []);
-
-//   const recordBarcodeScan = useCallback((barcode) => {
-//     const previousBarcode = lastScannedBarcode;
-//     setTxForm((prev) => {
-//       const prevQty = parseInt(prev.quantity, 10) || 0;
-//       const nextQty = barcode === previousBarcode ? prevQty + 1 : 1;
-//       return { ...prev, quantity: String(nextQty) };
-//     });
-//     setLastScannedBarcode(barcode);
-//   }, [lastScannedBarcode]);
 
 //   const resetScanState = useCallback(() => {
 //     setLastScannedBarcode('');
@@ -2328,17 +108,13 @@
 //     setAvailableLots([]);
 //   }, [defaultWarehouseId]);
 
-//   const scannerItemId = parseInt(txForm.itemId, 10);
-//   const scannerWarehouseId = parseInt(txForm.warehouseId, 10);
-
-//   // Load POs globally on mount so they are ready for filtering
+//   // --- API Loaders ---
 //   const loadPendingPurchaseOrders = useCallback(async () => {
 //     setPoLoading(true);
 //     try {
 //       const response = await api.get('/purchase-orders/pending');
-//       const list = response.data || [];
-//       setPoList(list);
-//       setFilteredPoList(list);
+//       setPoList(response.data || []);
+//       setFilteredPoList(response.data || []);
 //     } catch (error) {
 //       setPoList([]);
 //       setFilteredPoList([]);
@@ -2351,17 +127,16 @@
 //     loadPendingPurchaseOrders();
 //   }, [loadPendingPurchaseOrders]);
 
-//   // Fetch available lots when Item or Warehouse changes
 //   const loadAvailableLots = useCallback(async () => {
+//     const scannerItemId = parseInt(txForm.itemId, 10);
+//     const scannerWarehouseId = parseInt(txForm.warehouseId, 10);
 //     if (!scannerItemId || !scannerWarehouseId) {
 //       setAvailableLots([]);
 //       return;
 //     }
 //     setLotsLoading(true);
 //     try {
-//       const res = await api.get('/stock/lots', {
-//         params: { itemId: scannerItemId, warehouseId: scannerWarehouseId }
-//       });
+//       const res = await api.get('/stock/lots', { params: { itemId: scannerItemId, warehouseId: scannerWarehouseId } });
 //       const normalized = (res.data || []).map((lot) => ({
 //         lotId: lot.lotId ?? lot.LotId ?? null,
 //         lotNumber: lot.lotNumber ?? lot.LotNumber ?? 'General',
@@ -2373,13 +148,13 @@
 //     } finally {
 //       setLotsLoading(false);
 //     }
-//   }, [scannerItemId, scannerWarehouseId]);
+//   }, [txForm.itemId, txForm.warehouseId]);
 
 //   useEffect(() => {
 //     loadAvailableLots();
 //   }, [loadAvailableLots]);
 
-//   // Auto-Select Lot for OUT / TRANSFER modes
+//   // Auto-Select Lot for OUT / TRANSFER
 //   useEffect(() => {
 //     if (availableLots.length > 0 && (txMode === 'out' || txMode === 'transfer')) {
 //       const validLot = availableLots.find(l => l.quantity > 0);
@@ -2394,12 +169,8 @@
 //     if (!txForm.itemId) {
 //       setFilteredPoList(poList);
 //     } else {
-//       const filtered = poList.filter(po =>
-//         po.lines.some(l => String(l.itemId) === String(txForm.itemId) && l.pendingQty > 0)
-//       );
+//       const filtered = poList.filter(po => po.lines.some(l => String(l.itemId) === String(txForm.itemId) && l.pendingQty > 0));
 //       setFilteredPoList(filtered);
-      
-//       // Auto-select PO if there's exactly 1 match
 //       if (filtered.length === 1 && selectedPoNumber !== filtered[0].poNumber) {
 //         setSelectedPoNumber(filtered[0].poNumber);
 //       } else if (filtered.length === 0) {
@@ -2408,7 +179,7 @@
 //     }
 //   }, [poList, txForm.itemId, selectedPoNumber]);
 
-//   // Auto-Select PO Line based on Selected PO and Scanned Item
+//   // Auto-Select PO Line
 //   useEffect(() => {
 //     if (selectedPo && txForm.itemId) {
 //       const match = selectedPo.lines.find(l => String(l.itemId) === String(txForm.itemId));
@@ -2423,7 +194,7 @@
 //     }
 //   }, [selectedPo, txForm.itemId]);
 
-
+//   // --- Camera & Scanning Logic ---
 //   const stopCamera = useCallback(() => {
 //     try {
 //       codeReaderRef.current?.reset();
@@ -2438,13 +209,13 @@
 //       const trimmed = (barcodeValue || '').trim();
 //       if (!trimmed) return null;
       
+//       setCurrentItem(null);
+//       setCurrentPoLine(null);
 //       setDetectedBarcode(trimmed);
       
 //       try {
 //         const response = await api.get(`/items/barcode/${encodeURIComponent(trimmed)}`);
 //         const payload = response.data;
-        
-//         // Auto-detect Warehouse from inventory payload, fallback to first available
 //         const autoWarehouseId = payload.inventory?.warehouseId ?? warehouses[0]?.id ?? '';
         
 //         setCurrentItem({
@@ -2454,44 +225,59 @@
 //           serialPrefix: payload.serialPrefix
 //         });
         
-//         setTxForm((prev) => ({
-//           ...prev,
-//           itemId: String(payload.itemId),
-//           warehouseId: String(autoWarehouseId),
-//           // Clear manual lot number so it doesn't carry over from previous scans
-//           lotNumber: '',
-//           lotId: ''
-//         }));
-
-//         onScanDetected({
-//           itemId: payload.itemId,
-//           warehouseId: autoWarehouseId,
-//           lotId: payload.inventory?.lotId ?? null,
-//           lotNumber: payload.inventory?.lotNumber ?? ''
+//         setTxForm((prev) => {
+//           const prevQty = parseInt(prev.quantity, 10) || 0;
+//           const nextQty = trimmed === lastScannedBarcode ? prevQty + 1 : 1;
+//           return {
+//             ...prev,
+//             itemId: String(payload.itemId),
+//             warehouseId: String(autoWarehouseId),
+//             quantity: String(nextQty),
+//             lotNumber: '', // Reset lot number on new scan
+//             lotId: ''
+//           };
 //         });
+
+//         setLastScannedBarcode(trimmed);
+
+//         if (activeTab === 'po') {
+//           showStatus('info', `Item matched. Please verify PO Line.`);
+//         } else {
+//           showStatus('success', `Detected: ${payload.itemCode}`);
+//         }
         
-//         showStatus('success', `Detected: ${payload.itemCode}`);
+//         onScanDetected({ itemId: payload.itemId, warehouseId: autoWarehouseId });
 //         stopCamera();
-//         recordBarcodeScan(trimmed);
-        
 //         return payload;
+
 //       } catch (err) {
 //         console.error('Barcode lookup failed', err);
-//         showStatus('error', err?.response?.status === 404 ? 'Item not found in catalog' : 'Failed to resolve barcode');
+//         const status = err?.response?.status;
+        
+//         // INTERCEPT 404: Open Item Creation Modal
+//         if (status === 404) {
+//           stopCamera();
+//           showStatus('warning', 'Unknown barcode. Register item to continue.');
+//           setProductForm({
+//             ...createEmptyProductForm(),
+//             barcode: trimmed,
+//             itemCode: `ITEM-${trimmed.substring(0, 6).toUpperCase()}` // Auto-suggest code
+//           });
+//           setShowCreateForm(true);
+//         } else {
+//           showStatus('error', 'Failed to resolve barcode');
+//         }
 //         return null;
 //       }
 //     },
-//     [onScanDetected, showStatus, warehouses, recordBarcodeScan, stopCamera]
+//     [onScanDetected, showStatus, warehouses, activeTab, lastScannedBarcode, stopCamera]
 //   );
 
 //   const handleDetectedCode = useCallback(async (code) => {
 //     const trimmed = (code || '').trim();
 //     if (!trimmed) return;
 //     const now = Date.now();
-//     if (
-//       trimmed !== lastScan.current.barcode ||
-//       now - lastScan.current.timestamp >= SCAN_COOLDOWN_MS
-//     ) {
+//     if (trimmed !== lastScan.current.barcode || now - lastScan.current.timestamp >= SCAN_COOLDOWN_MS) {
 //       lastScan.current = { barcode: trimmed, timestamp: now };
 //       await resolveBarcode(trimmed);
 //     }
@@ -2508,39 +294,22 @@
 //     if (!videoRef.current) return;
 //     setCameraError('');
 //     try {
-//       if (codeReaderRef.current) {
-//         codeReaderRef.current.reset();
-//       } else {
-//         codeReaderRef.current = new BrowserMultiFormatReader();
-//       }
+//       if (codeReaderRef.current) codeReaderRef.current.reset();
+//       else codeReaderRef.current = new BrowserMultiFormatReader();
 
 //       const deviceId = await findBackCamera();
-
-//       codeReaderRef.current
-//         .decodeFromVideoDevice(
-//           deviceId ?? undefined,
-//           videoRef.current,
-//           (result, error) => {
-//             if (result) handleDetectedCode(result.getText());
-//             if (error && !(error instanceof NotFoundException)) {
-//               console.error('Decode error', error);
-//             }
-//           }
-//         )
-//         .catch((err) => {
-//           console.error('Camera error:', err);
-//           setCameraError(`Camera unavailable: ${err.message}`);
-//           setCameraActive(false);
-//           showStatus('warning', 'Camera denied – using manual entry');
-//         });
+//       codeReaderRef.current.decodeFromVideoDevice(deviceId ?? undefined, videoRef.current, (result, error) => {
+//         if (result) handleDetectedCode(result.getText());
+//       }).catch((err) => {
+//         setCameraError(`Camera unavailable: ${err.message}`);
+//         setCameraActive(false);
+//       });
 
 //       setCameraActive(true);
-//       showStatus('success', 'Camera ready – point at a barcode');
+//       showStatus('info', 'Camera active. Point at barcode.');
 //     } catch (err) {
-//       console.error('Start camera failed', err);
 //       setCameraError(`Camera unavailable: ${err.message}`);
 //       setCameraActive(false);
-//       showStatus('warning', 'Camera denied – use manual entry');
 //     }
 //   }, [handleDetectedCode, showStatus, findBackCamera]);
 
@@ -2549,14 +318,43 @@
 //     return stopCamera;
 //   }, [startCamera, stopCamera]);
 
-//   // --- TRANSACTION LOGIC ---
+//   // --- ON-THE-FLY ITEM CREATION ---
+//   const handleCreateProduct = async (e) => {
+//     e.preventDefault();
+//     setCreateLoading(true);
+//     try {
+//       await api.post("/smart-erp/products", {
+//         ...productForm,
+//         price: Number(productForm.price),
+//         maxStockLevel: Number(productForm.maxStockLevel),
+//         safetyStock: Number(productForm.safetyStock),
+//         leadTimeDays: Number(productForm.leadTimeDays),
+//         averageDailySales: Number(productForm.averageDailySales)
+//       });
+      
+//       const newBarcode = productForm.barcode;
+//       showStatus("success", "Item Registered! Resuming scan...");
+//       setProductForm(createEmptyProductForm());
+//       setShowCreateForm(false);
+//       fetchData(); 
+      
+//       // Auto-resolve newly created item to seamlessly continue workflow
+//       if (newBarcode) await resolveBarcode(newBarcode);
+//       else void startCamera();
+      
+//     } catch (err) {
+//       showStatus("error", err?.response?.data?.message || "Registration failed.");
+//     } finally {
+//       setCreateLoading(false);
+//     }
+//   };
+
+//   // --- TRANSACTION EXECUTION ---
 //   const handleStockTransaction = async (e) => {
 //     e?.preventDefault();
 //     if (!txForm.itemId || !txForm.warehouseId || !txForm.quantity) {
 //       return showStatus('error', 'Provide valid item, warehouse, and quantity');
 //     }
-
-//     const requestedQty = parseFloat(txForm.quantity);
 
 //     setLoading(true);
 //     try {
@@ -2564,26 +362,23 @@
 //       let payload = {
 //         itemId: parseInt(txForm.itemId, 10),
 //         warehouseId: parseInt(txForm.warehouseId, 10),
-//         quantity: requestedQty,
+//         quantity: parseFloat(txForm.quantity),
 //       };
 
 //       if (activeTab === 'po') {
-//         if (!selectedPo || !currentPoLine) return showStatus('error', 'Valid PO and PO Line required');
-//         if (requestedQty > currentPoLine.pendingQty) return showStatus('error', 'Quantity exceeds PO pending amount');
+//         if (!selectedPo || !currentPoLine) return showStatus('error', 'Valid PO Line required');
+//         if (payload.quantity > currentPoLine.pendingQty) return showStatus('error', 'Exceeds PO pending amount');
         
 //         endpoint = '/purchase-orders/receive';
 //         payload.poId = selectedPo.id;
-//         // Allows custom typed string, otherwise auto-generates
+//         // Strictly uses user input, else falls back to generic generated lot
 //         payload.lotNumber = txForm.lotNumber?.trim() || `LOT-${Date.now().toString().slice(-6)}`;
 //         payload.scannerDeviceId = 'MOBILE-SCAN';
 //       } 
 //       else if (activeTab === 'stock' && txMode === 'in') {
 //         endpoint = '/stock/in';
-//         // Securely passes exactly what the user typed for lot number
+//         // Strictly uses whatever custom string the user typed (e.g. "gbighh")
 //         payload.lotNumber = txForm.lotNumber?.trim() || null;
-//         if (serialGenerationForm.generatedSerials.length > 0) {
-//           payload.serialNumbers = serialGenerationForm.generatedSerials.map(s => s.serialNumber);
-//         }
 //       } 
 //       else if (activeTab === 'stock' && txMode === 'out') {
 //         if (!txForm.lotId) return showStatus('error', 'Source lot required for dispatch');
@@ -2598,54 +393,18 @@
 //       }
 
 //       const response = await api.post(endpoint, payload);
-//       const message = response.data?.message || `Transaction recorded successfully`;
-//       showStatus('success', message);
+//       showStatus('success', response.data?.message || `Transaction recorded successfully`);
       
-//       // Cleanup after success
 //       resetScanState();
-//       setSerialGenerationForm({ itemId: '', quantity: 0, generatedSerials: [] });
-//       setShowSerialModal(false);
 //       fetchData();
 //       if (activeTab === 'po') void loadPendingPurchaseOrders();
 //       void startCamera();
       
 //     } catch (err) {
-//       console.error(`Transaction failed`, err);
-//       showStatus('error', err.response?.data?.message || err.response?.data || `Transaction failed`);
+//       showStatus('error', err.response?.data?.message || `Transaction failed`);
 //     } finally {
 //       setLoading(false);
 //     }
-//   };
-
-//   const openSerialGenerationModal = () => {
-//     if (!txForm.itemId || !txForm.warehouseId || !txForm.quantity || parseFloat(txForm.quantity) <= 0) {
-//       return showStatus('error', 'Scan item and enter valid quantity first');
-//     }
-//     setSerialGenerationForm({
-//       itemId: txForm.itemId,
-//       quantity: parseFloat(txForm.quantity),
-//       generatedSerials: []
-//     });
-//     setShowSerialModal(true);
-//   };
-
-//   const generateSerialNumbers = () => {
-//     const qty = serialGenerationForm.quantity;
-//     if (qty <= 0 || qty > 100) {
-//       return showStatus('warning', 'Serial generation limited to 1-100 units per batch');
-//     }
-    
-//     const prefix = currentItem?.serialPrefix || `SN-${currentItem?.itemCode || 'ITEM'}`;
-//     const timestamp = Date.now().toString().slice(-4);
-//     const serials = Array.from({ length: qty }, (_, i) => ({
-//       serialNumber: `${prefix}-${timestamp}-${String(i + 1).padStart(4, '0')}`
-//     }));
-
-//     setSerialGenerationForm(prev => ({ ...prev, generatedSerials: serials }));
-//   };
-
-//   const confirmStockTransactionWithSerials = () => {
-//     handleStockTransaction();
 //   };
 
 //   const getAlertClass = (type) => {
@@ -2661,12 +420,10 @@
 //       {/* CAMERA VIEWFINDER */}
 //       <div className="position-relative bg-dark rounded-3 overflow-hidden shadow-sm mb-3" style={{ minHeight: '220px' }}>
 //         <video ref={videoRef} className="w-100 h-100 object-fit-cover" autoPlay muted playsInline />
-        
-//         {/* Scanner Overlay */}
 //         <div className="position-absolute top-0 start-0 w-100 h-100 d-flex flex-column align-items-center justify-content-center" style={{ pointerEvents: 'none' }}>
 //           <div className="scanner-laser" style={{ width: '70%', height: '2px', backgroundColor: '#10b981', boxShadow: '0 0 10px #10b981' }}></div>
 //           <div className="text-white fw-bold mt-3 px-3 py-1 rounded" style={{ backgroundColor: 'rgba(0,0,0,0.5)', fontSize: '0.8rem' }}>
-//             {cameraActive ? 'Point camera at barcode' : 'Initializing camera...'}
+//             {cameraActive ? 'Scanning for barcodes...' : 'Camera Offline'}
 //           </div>
 //         </div>
 //       </div>
@@ -2675,61 +432,43 @@
 
 //       {/* MANUAL INPUT */}
 //       <form onSubmit={handleManualSubmit} className="d-flex gap-2 mb-3">
-//         <input
-//           type="text"
-//           className="form-control erp-input font-monospace"
-//           placeholder="Manual barcode entry..."
-//           value={manualInput}
-//           onChange={(e) => setManualInput(e.target.value)}
-//         />
+//         <input type="text" className="form-control erp-input font-monospace" placeholder="Manual barcode entry..." value={manualInput} onChange={(e) => setManualInput(e.target.value)} />
 //         <button type="submit" className="btn btn-primary erp-btn px-4" disabled={!manualInput}>Lookup</button>
 //       </form>
 
-//       {/* STATUS MESSAGES */}
+//       {/* STATUS NOTIFICATIONS */}
 //       {status.text && (
 //         <div className={`alert erp-alert py-2 fw-bold ${getAlertClass(status.type)}`}>
 //           {status.text}
 //         </div>
 //       )}
 
-//       {/* DETECTED ITEM INFO */}
+//       {/* DETECTED ITEM CARD */}
 //       {currentItem && (
 //         <div className="alert alert-success d-flex flex-column mb-3 py-2 border-success shadow-sm">
 //           <div className="d-flex justify-content-between align-items-center">
 //              <span className="fw-bold font-monospace fs-5">{currentItem.itemCode}</span>
-//              <span className="badge bg-success">Detected</span>
+//              <button className="btn btn-sm btn-outline-danger erp-btn py-0 px-2" onClick={() => { resetScanState(); void startCamera(); }}>Clear</button>
 //           </div>
 //           <span className="small text-dark mt-1">{currentItem.description}</span>
-          
 //           {activeTab === 'po' && currentPoLine && (
 //             <div className="mt-2 pt-2 border-top border-success d-flex justify-content-between small fw-bold">
-//               <span>PO Target Matched</span>
+//               <span>PO Line Matched</span>
 //               <span>Pending: {currentPoLine.pendingQty}</span>
 //             </div>
-//           )}
-//           {activeTab === 'po' && selectedPo && !currentPoLine && (
-//              <div className="mt-2 pt-2 border-top border-success small fw-bold text-danger">
-//                Item not found in selected PO.
-//              </div>
 //           )}
 //         </div>
 //       )}
 
-//       {/* TOP LEVEL NAVIGATION TABS */}
+//       {/* TOP NAVIGATION TABS */}
 //       <ul className="nav nav-tabs mb-3 border-bottom-0">
 //         <li className="nav-item">
-//           <button 
-//             className={`nav-link fw-bold ${activeTab === 'stock' ? 'active bg-light border-bottom-0 text-primary' : 'text-muted'}`}
-//             onClick={() => { setActiveTab('stock'); resetScanState(); }}
-//           >
-//             📦 Stock Movement
+//           <button className={`nav-link fw-bold ${activeTab === 'stock' ? 'active bg-light border-bottom-0 text-primary' : 'text-muted'}`} onClick={() => { setActiveTab('stock'); resetScanState(); void startCamera(); }}>
+//             📦 Stock Ops
 //           </button>
 //         </li>
 //         <li className="nav-item">
-//           <button 
-//             className={`nav-link fw-bold ${activeTab === 'po' ? 'active bg-light border-bottom-0 text-primary' : 'text-muted'}`}
-//             onClick={() => { setActiveTab('po'); resetScanState(); }}
-//           >
+//           <button className={`nav-link fw-bold ${activeTab === 'po' ? 'active bg-light border-bottom-0 text-primary' : 'text-muted'}`} onClick={() => { setActiveTab('po'); resetScanState(); void startCamera(); }}>
 //             🛒 PO Receiving
 //           </button>
 //         </li>
@@ -2742,51 +481,19 @@
 //         <div className="erp-panel shadow-sm flex-grow-1 d-flex flex-column bg-light border-top-0 rounded-top-0">
 //           <div className="p-3 bg-white flex-grow-1 d-flex flex-column rounded-bottom">
             
-//             {/* TX MODE SELECTOR */}
 //             <div className="btn-group w-100 mb-3 shadow-sm" role="group">
-//               <button 
-//                 type="button" 
-//                 className={`btn erp-btn ${txMode === 'in' ? 'btn-success fw-bold' : 'btn-light border'}`}
-//                 onClick={() => { setTxMode('in'); setTxForm(prev => ({...prev, lotId: '', destWarehouseId: ''})); }}
-//               >
-//                 📥 RECEIVE
-//               </button>
-//               <button 
-//                 type="button" 
-//                 className={`btn erp-btn ${txMode === 'out' ? 'btn-danger fw-bold' : 'btn-light border'}`}
-//                 onClick={() => { setTxMode('out'); setTxForm(prev => ({...prev, lotNumber: '', destWarehouseId: ''})); }}
-//               >
-//                 📤 DISPATCH
-//               </button>
-//               <button 
-//                 type="button" 
-//                 className={`btn erp-btn ${txMode === 'transfer' ? 'btn-warning fw-bold' : 'btn-light border'}`}
-//                 onClick={() => { setTxMode('transfer'); setTxForm(prev => ({...prev, lotNumber: ''})); }}
-//               >
-//                 🔁 TRANSFER
-//               </button>
+//               <button type="button" className={`btn erp-btn ${txMode === 'in' ? 'btn-success fw-bold' : 'btn-light border'}`} onClick={() => { setTxMode('in'); setTxForm(p => ({...p, lotId: '', destWarehouseId: ''})); }}>📥 IN</button>
+//               <button type="button" className={`btn erp-btn ${txMode === 'out' ? 'btn-danger fw-bold' : 'btn-light border'}`} onClick={() => { setTxMode('out'); setTxForm(p => ({...p, lotNumber: '', destWarehouseId: ''})); }}>📤 OUT</button>
+//               <button type="button" className={`btn erp-btn ${txMode === 'transfer' ? 'btn-warning fw-bold' : 'btn-light border'}`} onClick={() => { setTxMode('transfer'); setTxForm(p => ({...p, lotNumber: ''})); }}>🔁 XFER</button>
 //             </div>
 
-//             <div className="erp-instruction-box mb-4 p-2 rounded" style={{
-//               backgroundColor: txMode === 'in' ? '#f0fdf4' : txMode === 'out' ? '#fef2f2' : '#fffbeb',
-//               borderLeft: `4px solid ${txMode === 'in' ? '#22c55e' : txMode === 'out' ? '#ef4444' : '#f59e0b'}`
-//             }}>
-//               <span className="fw-semibold small text-uppercase" style={{color: '#475569'}}>
-//                 {txMode === 'in' ? 'Add stock & generate serials' : txMode === 'out' ? 'Dispatch stock from warehouse' : 'Transfer stock between warehouses'}
-//               </span>
-//             </div>
-
-//             {/* FORM GRID */}
 //             <fieldset disabled={!currentItem}>
 //               <form onSubmit={(e) => e.preventDefault()}>
 //                 <div className="row g-2 mb-3">
 //                   <div className="col-12">
-//                     <label className="erp-label">Active Warehouse <span className="text-danger">*</span></label>
+//                     <label className="erp-label">Location <span className="text-danger">*</span></label>
 //                     <select className="form-select erp-input" value={txForm.warehouseId} onChange={(e) => setTxForm({ ...txForm, warehouseId: e.target.value })}>
-//                       <option value="">-- Select Location --</option>
-//                       {warehouses.map((warehouse) => (
-//                         <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
-//                       ))}
+//                       {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
 //                     </select>
 //                   </div>
 //                 </div>
@@ -2794,29 +501,28 @@
 //                 <div className="row g-2 mb-3">
 //                   <div className="col-4">
 //                     <label className="erp-label">Qty <span className="text-danger">*</span></label>
-//                     <input type="number" className="form-control erp-input font-monospace text-end fw-bold" value={txForm.quantity} onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })} min="0" placeholder="0" />
+//                     <input type="number" className="form-control erp-input font-monospace text-end fw-bold" value={txForm.quantity} onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })} min="1" placeholder="0" />
 //                   </div>
 
-//                   {/* Dynamic Lot Fields based on Mode */}
 //                   {txMode === 'in' ? (
 //                     <div className="col-8">
-//                       <label className="erp-label">Assign Lot / Batch Number</label>
+//                       <label className="erp-label">Lot / Batch Number</label>
 //                       <input 
 //                         type="text" 
 //                         className="form-control erp-input font-monospace" 
 //                         value={txForm.lotNumber} 
 //                         onChange={(e) => setTxForm({ ...txForm, lotNumber: e.target.value })} 
-//                         placeholder="Type lot string..." 
+//                         placeholder="Type lot code..." 
 //                       />
 //                     </div>
 //                   ) : (
 //                     <div className="col-8">
-//                       <label className="erp-label">Select Source Lot <span className="text-danger">*</span></label>
-//                       <select className="form-select erp-input font-monospace" value={txForm.lotId} onChange={(e) => setTxForm({ ...txForm, lotId: e.target.value })} disabled={lotsLoading}>
-//                         <option value="">{lotsLoading ? 'Loading...' : '-- Choose Active Lot --'}</option>
+//                       <label className="erp-label">Source Lot <span className="text-danger">*</span></label>
+//                       <select className="form-select erp-input font-monospace" value={txForm.lotId} onChange={(e) => setTxForm({ ...txForm, lotId: e.target.value })}>
+//                         <option value="">{lotsLoading ? 'Loading...' : '-- Select --'}</option>
 //                         {availableLots.filter(l => l.quantity > 0).map((lot) => (
 //                           <option key={`${lot.lotId}-${lot.lotNumber}`} value={lot.lotId}>
-//                             {lot.lotNumber || 'UNASSIGNED'} (Avail: {lot.quantity})
+//                             {lot.lotNumber} (Avail: {lot.quantity})
 //                           </option>
 //                         ))}
 //                       </select>
@@ -2824,45 +530,31 @@
 //                   )}
 //                 </div>
 
-//                 {/* Transfer specific fields */}
 //                 {txMode === 'transfer' && (
 //                   <div className="row g-2 mb-3 p-2 bg-light border rounded">
 //                     <div className="col-12">
-//                       <label className="erp-label text-warning">Destination Warehouse <span className="text-danger">*</span></label>
+//                       <label className="erp-label text-warning">Dest Location <span className="text-danger">*</span></label>
 //                       <select className="form-select erp-input" value={txForm.destWarehouseId} onChange={(e) => setTxForm({ ...txForm, destWarehouseId: e.target.value })}>
-//                         <option value="">-- Select Destination Bin --</option>
-//                         {warehouses
-//                           .filter((warehouse) => warehouse.id !== parseInt(txForm.warehouseId, 10))
-//                           .map((warehouse) => (
-//                             <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
-//                           ))}
+//                         <option value="">-- Target Bin --</option>
+//                         {warehouses.filter((w) => w.id !== parseInt(txForm.warehouseId, 10)).map((w) => (
+//                           <option key={w.id} value={w.id}>{w.name}</option>
+//                         ))}
 //                       </select>
 //                     </div>
 //                   </div>
 //                 )}
 
-//                 <div className="d-flex justify-content-end pt-3 border-top mt-auto">
-//                   <button
-//                     type="button"
-//                     onClick={(e) => (txMode === 'in' ? openSerialGenerationModal() : handleStockTransaction(e))}
-//                     disabled={loading || !txForm.itemId || !txForm.warehouseId || !txForm.quantity}
-//                     className={`btn erp-btn w-100 py-2 fw-bold ${txMode === 'in' ? 'btn-success' : txMode === 'out' ? 'btn-danger' : 'btn-warning text-dark'}`}
-//                   >
-//                     {loading ? 'PROCESSING...' : txMode === 'in' ? 'RECEIVE & GEN SERIALS' : txMode === 'out' ? 'EXECUTE DISPATCH' : 'EXECUTE TRANSFER'}
+//                 <div className="d-flex pt-3 border-top mt-auto">
+//                   <button type="button" onClick={handleStockTransaction} disabled={loading || !txForm.itemId || !txForm.quantity} className={`btn erp-btn w-100 py-2 fw-bold ${txMode === 'in' ? 'btn-success' : txMode === 'out' ? 'btn-danger' : 'btn-warning text-dark'}`}>
+//                     {loading ? 'PROCESSING...' : txMode === 'in' ? 'EXECUTE RECEIPT' : txMode === 'out' ? 'EXECUTE DISPATCH' : 'EXECUTE TRANSFER'}
 //                   </button>
 //                 </div>
 //               </form>
 //             </fieldset>
-            
-//             {!currentItem && (
-//               <div className="text-center text-muted small mt-3 p-2 border border-dashed rounded">
-//                 Scan a barcode to unlock transaction controls.
-//               </div>
-//             )}
+//             {!currentItem && <div className="text-center text-muted small mt-3 p-2 border border-dashed rounded">Scan an item to unlock transaction controls.</div>}
 //           </div>
 //         </div>
 //       )}
-
 
 //       {/* ========================================= */}
 //       {/* TAB 2: PO RECEIVING */}
@@ -2871,146 +563,96 @@
 //         <div className="erp-panel shadow-sm flex-grow-1 d-flex flex-column bg-light border-top-0 rounded-top-0">
 //           <div className="p-3 bg-white flex-grow-1 d-flex flex-column rounded-bottom">
             
-//             {/* Auto-Filtered PO Selection */}
 //             <div className="mb-4">
-//               <div className="d-flex justify-content-between align-items-center mb-2">
-//                 <label className="erp-label m-0">Target Purchase Order <span className="text-danger">*</span></label>
-//                 {poLoading && <div className="spinner-border spinner-border-sm text-primary"></div>}
-//               </div>
-//               <select
-//                 className="form-select erp-input font-monospace mb-2"
-//                 value={selectedPoNumber}
-//                 onChange={(e) => {
-//                   setSelectedPoNumber(e.target.value);
-//                   setCurrentPoLine(null);
-//                 }}
-//               >
-//                 <option value="">-- Select Pending PO --</option>
+//               <label className="erp-label m-0 mb-2">Target Purchase Order</label>
+//               <select className="form-select erp-input font-monospace mb-2" value={selectedPoNumber} onChange={(e) => { setSelectedPoNumber(e.target.value); setCurrentPoLine(null); }}>
+//                 <option value="">-- Select PO --</option>
 //                 {filteredPoList.map((po) => (
-//                   <option key={po.poNumber} value={po.poNumber}>
-//                     {po.poNumber} ({po.totalPending.toFixed(0)} units pending)
-//                   </option>
+//                   <option key={po.poNumber} value={po.poNumber}>{po.poNumber} (Pending: {po.totalPending})</option>
 //                 ))}
 //               </select>
-              
 //               {selectedPo && (
-//                 <div className="d-flex justify-content-between align-items-center bg-light p-2 border rounded small">
-//                   <span className="text-muted fw-bold">Supplier:</span>
-//                   <span className="fw-semibold text-dark">{selectedPo.supplierName}</span>
+//                 <div className="d-flex justify-content-between bg-light p-2 border rounded small text-muted">
+//                   <span>Vendor:</span><span className="fw-bold text-dark">{selectedPo.supplierName}</span>
 //                 </div>
 //               )}
 //             </div>
 
-//             {/* Receiving Form */}
 //             <fieldset disabled={!currentItem || !currentPoLine}>
 //               <form onSubmit={(e) => e.preventDefault()}>
 //                 <div className="row g-2 mb-3">
 //                   <div className="col-12">
-//                     <label className="erp-label">Receive to Warehouse <span className="text-danger">*</span></label>
+//                     <label className="erp-label">Receive Location</label>
 //                     <select className="form-select erp-input" value={txForm.warehouseId} onChange={(e) => setTxForm({ ...txForm, warehouseId: e.target.value })}>
-//                       <option value="">-- Select Location --</option>
-//                       {warehouses.map((warehouse) => (
-//                         <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
-//                       ))}
+//                       {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
 //                     </select>
 //                   </div>
 //                 </div>
-
 //                 <div className="row g-2 mb-3">
 //                   <div className="col-4">
-//                     <label className="erp-label">Recv Qty <span className="text-danger">*</span></label>
-//                     <input type="number" className="form-control erp-input font-monospace text-end fw-bold" value={txForm.quantity} onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })} min="0" placeholder="0" />
+//                     <label className="erp-label">Qty <span className="text-danger">*</span></label>
+//                     <input type="number" className="form-control erp-input font-monospace text-end fw-bold" value={txForm.quantity} onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })} min="1" placeholder="0" />
 //                   </div>
 //                   <div className="col-8">
-//                     <label className="erp-label">Assign Lot / Batch Number</label>
-//                     <input 
-//                       type="text" 
-//                       className="form-control erp-input font-monospace" 
-//                       value={txForm.lotNumber} 
-//                       onChange={(e) => setTxForm({ ...txForm, lotNumber: e.target.value })} 
-//                       placeholder="Type lot string..." 
-//                     />
+//                     <label className="erp-label">Assign Lot Number</label>
+//                     <input type="text" className="form-control erp-input font-monospace" value={txForm.lotNumber} onChange={(e) => setTxForm({ ...txForm, lotNumber: e.target.value })} placeholder="Type custom lot..." />
 //                   </div>
 //                 </div>
-
-//                 <div className="d-flex justify-content-end pt-3 border-top mt-auto">
-//                   <button
-//                     type="button"
-//                     onClick={handleStockTransaction}
-//                     disabled={loading || !txForm.itemId || !txForm.warehouseId || !txForm.quantity || !currentPoLine}
-//                     className="btn btn-primary erp-btn w-100 py-2 fw-bold"
-//                   >
+//                 <div className="d-flex pt-3 border-top mt-auto">
+//                   <button type="button" onClick={handleStockTransaction} disabled={loading || !txForm.quantity || !currentPoLine} className="btn btn-primary erp-btn w-100 py-2 fw-bold">
 //                     {loading ? 'PROCESSING...' : 'RECEIVE PO STOCK'}
 //                   </button>
 //                 </div>
 //               </form>
 //             </fieldset>
-
-//             {!currentItem && (
-//               <div className="text-center text-muted small mt-3 p-2 border border-dashed rounded">
-//                 Scan an item barcode to auto-match pending PO lines.
-//               </div>
-//             )}
+//             {!currentItem && <div className="text-center text-muted small mt-3 p-2 border border-dashed rounded">Scan an item to match against pending PO lines.</div>}
 //           </div>
 //         </div>
 //       )}
 
-
 //       {/* ========================================= */}
-//       {/* SERIAL GENERATION MODAL                   */}
+//       {/* 404 INTERCEPT: ON-THE-FLY ITEM CREATION   */}
 //       {/* ========================================= */}
-//       {showSerialModal && (
-//         <div className="erp-modal-overlay">
-//           <div className="erp-dialog erp-dialog-md w-100 m-3">
+//       {showCreateForm && (
+//         <div className="erp-modal-overlay" style={{ zIndex: 1100 }}>
+//           <div className="erp-dialog erp-dialog-md w-100 m-3 shadow-lg">
 //             <div className="erp-dialog-header">
-//               <h6 className="m-0 fw-bold">Serial Number Allocation</h6>
-//               <button className="btn-close btn-close-white" onClick={() => setShowSerialModal(false)}></button>
+//               <h6 className="m-0 fw-bold">Unrecognized Barcode Detected</h6>
+//               <button className="btn-close btn-close-white" onClick={() => { setShowCreateForm(false); void startCamera(); }}></button>
 //             </div>
-//             <div className="erp-dialog-body p-3 bg-white">
-//               <div className="d-flex justify-content-between align-items-center mb-3 p-2 bg-light border rounded">
-//                 <div>
-//                   <span className="erp-label m-0">Inbound Qty</span>
-//                   <span className="fs-5 fw-bold font-monospace text-success">{serialGenerationForm.quantity}</span>
+//             <div className="erp-dialog-body bg-white p-4">
+//               <form onSubmit={handleCreateProduct}>
+//                 <div className="alert alert-warning py-2 small fw-bold mb-4 border-warning">
+//                   Barcode <span className="font-monospace text-dark">{productForm.barcode}</span> is not in the system. Register it to continue scanning.
 //                 </div>
-//                 <button className="btn btn-sm btn-outline-primary fw-bold erp-btn" onClick={generateSerialNumbers}>
-//                   + Generate
-//                 </button>
-//               </div>
+                
+//                 <div className="mb-3">
+//                   <label className="erp-label">Item Code <span className="text-danger">*</span></label>
+//                   <input className="form-control erp-input font-monospace" placeholder="e.g. SKU-001" value={productForm.itemCode} onChange={(e) => setProductForm({ ...productForm, itemCode: e.target.value })} required />
+//                 </div>
+//                 <div className="mb-3">
+//                   <label className="erp-label">Description <span className="text-danger">*</span></label>
+//                   <textarea className="form-control erp-input" rows="2" value={productForm.description} onChange={(e) => setProductForm({ ...productForm, description: e.target.value })} required />
+//                 </div>
 
-//               {serialGenerationForm.generatedSerials.length > 0 ? (
-//                 <div className="border rounded overflow-hidden" style={{ maxHeight: '200px', overflowY: 'auto' }}>
-//                   <table className="table table-sm table-striped m-0 font-monospace" style={{ fontSize: '0.8rem' }}>
-//                     <thead className="table-light sticky-top">
-//                       <tr>
-//                         <th className="ps-3 text-uppercase text-muted">S/N</th>
-//                         <th className="text-uppercase text-muted">Identifier</th>
-//                       </tr>
-//                     </thead>
-//                     <tbody>
-//                       {serialGenerationForm.generatedSerials.map((s, i) => (
-//                         <tr key={i}>
-//                           <td className="ps-3 text-muted">{i + 1}</td>
-//                           <td className="fw-bold">{s.serialNumber}</td>
-//                         </tr>
-//                       ))}
-//                     </tbody>
-//                   </table>
+//                 <div className="row g-2 mb-4">
+//                   <div className="col-6">
+//                     <label className="erp-label">Unit Price</label>
+//                     <input type="number" step="0.01" className="form-control erp-input font-monospace" value={productForm.price} onChange={(e) => setProductForm({ ...productForm, price: Number(e.target.value) })} />
+//                   </div>
+//                   <div className="col-6">
+//                     <label className="erp-label">Category</label>
+//                     <input className="form-control erp-input" placeholder="General" value={productForm.category} onChange={(e) => setProductForm({ ...productForm, category: e.target.value })} />
+//                   </div>
 //                 </div>
-//               ) : (
-//                 <div className="text-center py-4 text-muted small border rounded bg-light">
-//                   Click generate to create unique serials based on item prefix.
+
+//                 <div className="d-flex justify-content-end gap-2 pt-3 border-top mt-3">
+//                   <button type="button" className="btn btn-light border erp-btn" onClick={() => { setShowCreateForm(false); void startCamera(); }}>Cancel</button>
+//                   <button type="submit" className="btn btn-primary erp-btn px-4 fw-bold" disabled={createLoading}>
+//                     {createLoading ? 'Saving...' : 'Register & Resume'}
+//                   </button>
 //                 </div>
-//               )}
-//             </div>
-//             <div className="p-3 bg-light border-top d-flex justify-content-end gap-2">
-//               <button className="btn btn-light border erp-btn" onClick={() => setShowSerialModal(false)}>Cancel</button>
-//               <button 
-//                 className="btn btn-primary erp-btn px-4" 
-//                 onClick={confirmStockTransactionWithSerials}
-//                 disabled={serialGenerationForm.generatedSerials.length === 0 || loading}
-//               >
-//                 {loading ? 'Saving...' : 'Commit to Ledger'}
-//               </button>
+//               </form>
 //             </div>
 //           </div>
 //         </div>
@@ -3127,13 +769,15 @@
 //   );
 // }
 
+
+
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
 import api from '../services/apiClient';
 
 const SCAN_COOLDOWN_MS = 2000;
 
-// Base template for the on-the-fly item creation
 const createEmptyProductForm = () => ({
   itemCode: "",
   description: "",
@@ -3142,7 +786,7 @@ const createEmptyProductForm = () => ({
   unit: "NOS",
   price: 0,
   warehouseLocation: "",
-  isLotTracked: true, // Default to true to encourage tracking
+  isLotTracked: true, 
   serialPrefix: "",
   itemType: "Purchased",
   maxStockLevel: 1000,
@@ -3174,7 +818,7 @@ export default function MobileScanner({
   const [lastScannedBarcode, setLastScannedBarcode] = useState('');
   
   // --- Navigation & Modes ---
-  const [activeTab, setActiveTab] = useState('stock'); // 'stock' or 'po'
+  const [activeTab, setActiveTab] = useState('stock'); // 'stock', 'po', 'create'
   const [txMode, setTxMode] = useState('in'); // 'in', 'out', 'transfer'
   
   const defaultWarehouseId = warehouses.length ? String(warehouses[0].id) : '';
@@ -3202,15 +846,20 @@ export default function MobileScanner({
   const [availableLots, setAvailableLots] = useState([]);
   const [lotsLoading, setLotsLoading] = useState(false);
 
-  // --- Master Data Creation States (404 Intercept) ---
-  const [showCreateForm, setShowCreateForm] = useState(false);
+  // --- Serial Generation Modal States ---
+  const [showSerialModal, setShowSerialModal] = useState(false);
+  const [serialGenerationForm, setSerialGenerationForm] = useState({
+    quantity: 0,
+    generatedSerials: []
+  });
+
+  // --- Master Data Creation States ---
   const [productForm, setProductForm] = useState(createEmptyProductForm());
   const [createLoading, setCreateLoading] = useState(false);
 
-  // --- Helper Functions ---
   const showStatus = useCallback((type, text) => {
     setStatus({ type, text });
-    setTimeout(() => setStatus({ type: '', text: '' }), 4000);
+    setTimeout(() => setStatus({ type: '', text: '' }), 4500);
   }, []);
 
   const findBackCamera = useCallback(async () => {
@@ -3236,7 +885,6 @@ export default function MobileScanner({
     setAvailableLots([]);
   }, [defaultWarehouseId]);
 
-  // --- API Loaders ---
   const loadPendingPurchaseOrders = useCallback(async () => {
     setPoLoading(true);
     try {
@@ -3299,6 +947,7 @@ export default function MobileScanner({
     } else {
       const filtered = poList.filter(po => po.lines.some(l => String(l.itemId) === String(txForm.itemId) && l.pendingQty > 0));
       setFilteredPoList(filtered);
+      
       if (filtered.length === 1 && selectedPoNumber !== filtered[0].poNumber) {
         setSelectedPoNumber(filtered[0].poNumber);
       } else if (filtered.length === 0) {
@@ -3322,7 +971,6 @@ export default function MobileScanner({
     }
   }, [selectedPo, txForm.itemId]);
 
-  // --- Camera & Scanning Logic ---
   const stopCamera = useCallback(() => {
     try {
       codeReaderRef.current?.reset();
@@ -3332,6 +980,16 @@ export default function MobileScanner({
     setCameraActive(false);
   }, []);
 
+  const recordBarcodeScan = useCallback((barcode) => {
+    const previousBarcode = lastScannedBarcode;
+    setTxForm((prev) => {
+      const prevQty = parseInt(prev.quantity, 10) || 0;
+      const nextQty = barcode === previousBarcode ? prevQty + 1 : 1;
+      return { ...prev, quantity: String(nextQty) };
+    });
+    setLastScannedBarcode(barcode);
+  }, [lastScannedBarcode]);
+
   const resolveBarcode = useCallback(
     async (barcodeValue) => {
       const trimmed = (barcodeValue || '').trim();
@@ -3340,11 +998,22 @@ export default function MobileScanner({
       setCurrentItem(null);
       setCurrentPoLine(null);
       setDetectedBarcode(trimmed);
+      let allowScanRecording = true;
       
       try {
         const response = await api.get(`/items/barcode/${encodeURIComponent(trimmed)}`);
         const payload = response.data;
         const autoWarehouseId = payload.inventory?.warehouseId ?? warehouses[0]?.id ?? '';
+
+        // STRICT PO VALIDATION: If in PO tab, ensure item belongs to a pending PO
+        if (activeTab === 'po') {
+          const isItemInAnyPO = poList.some(po => po.lines.some(l => String(l.itemId) === String(payload.itemId) && l.pendingQty > 0));
+          if (!isItemInAnyPO) {
+            showStatus('error', `Item ${payload.itemCode} is NOT in any pending Purchase Order.`);
+            stopCamera();
+            return null;
+          }
+        }
         
         setCurrentItem({
           itemId: payload.itemId,
@@ -3361,7 +1030,7 @@ export default function MobileScanner({
             itemId: String(payload.itemId),
             warehouseId: String(autoWarehouseId),
             quantity: String(nextQty),
-            lotNumber: '', // Reset lot number on new scan
+            lotNumber: '', 
             lotId: ''
           };
         });
@@ -3369,36 +1038,39 @@ export default function MobileScanner({
         setLastScannedBarcode(trimmed);
 
         if (activeTab === 'po') {
-          showStatus('info', `Item matched. Please verify PO Line.`);
+          showStatus('info', `Item matched in PO queue. Verify target PO.`);
         } else {
           showStatus('success', `Detected: ${payload.itemCode}`);
         }
         
         onScanDetected({ itemId: payload.itemId, warehouseId: autoWarehouseId });
         stopCamera();
+        
+        if (allowScanRecording) {
+          recordBarcodeScan(trimmed);
+        }
         return payload;
 
       } catch (err) {
-        console.error('Barcode lookup failed', err);
         const status = err?.response?.status;
         
-        // INTERCEPT 404: Open Item Creation Modal
+        // INTERCEPT 404: Route to the "Add Item" tab instantly
         if (status === 404) {
           stopCamera();
-          showStatus('warning', 'Unknown barcode. Register item to continue.');
+          showStatus('warning', 'Unknown barcode detected. Please register it.');
           setProductForm({
             ...createEmptyProductForm(),
             barcode: trimmed,
-            itemCode: `ITEM-${trimmed.substring(0, 6).toUpperCase()}` // Auto-suggest code
+            itemCode: `ITEM-${trimmed.substring(0, 6).toUpperCase()}`
           });
-          setShowCreateForm(true);
+          setActiveTab('create');
         } else {
           showStatus('error', 'Failed to resolve barcode');
         }
         return null;
       }
     },
-    [onScanDetected, showStatus, warehouses, activeTab, lastScannedBarcode, stopCamera]
+    [onScanDetected, showStatus, warehouses, activeTab, poList, lastScannedBarcode, stopCamera, recordBarcodeScan]
   );
 
   const handleDetectedCode = useCallback(async (code) => {
@@ -3442,11 +1114,15 @@ export default function MobileScanner({
   }, [handleDetectedCode, showStatus, findBackCamera]);
 
   useEffect(() => {
-    void startCamera();
+    if (activeTab !== 'create') {
+      void startCamera();
+    } else {
+      stopCamera();
+    }
     return stopCamera;
-  }, [startCamera, stopCamera]);
+  }, [activeTab, startCamera, stopCamera]);
 
-  // --- ON-THE-FLY ITEM CREATION ---
+  // --- ITEM REGISTRATION (404 INTERCEPT) ---
   const handleCreateProduct = async (e) => {
     e.preventDefault();
     setCreateLoading(true);
@@ -3461,20 +1137,50 @@ export default function MobileScanner({
       });
       
       const newBarcode = productForm.barcode;
-      showStatus("success", "Item Registered! Resuming scan...");
+      showStatus("success", "Item Registered! Resuming stock operations...");
       setProductForm(createEmptyProductForm());
-      setShowCreateForm(false);
+      
+      setActiveTab('stock');
+      setTxMode('in');
       fetchData(); 
       
-      // Auto-resolve newly created item to seamlessly continue workflow
       if (newBarcode) await resolveBarcode(newBarcode);
-      else void startCamera();
       
     } catch (err) {
       showStatus("error", err?.response?.data?.message || "Registration failed.");
     } finally {
       setCreateLoading(false);
     }
+  };
+
+  // --- SERIAL GENERATION LOGIC ---
+  const openSerialGenerationModal = () => {
+    if (!txForm.itemId || !txForm.warehouseId || !txForm.quantity || parseFloat(txForm.quantity) <= 0) {
+      return showStatus('error', 'Valid Item, Warehouse, and Quantity required.');
+    }
+    if (activeTab === 'po' && !currentPoLine) {
+      return showStatus('error', 'Valid PO Line required.');
+    }
+    setSerialGenerationForm({
+      quantity: parseFloat(txForm.quantity),
+      generatedSerials: []
+    });
+    setShowSerialModal(true);
+  };
+
+  const generateSerialNumbers = () => {
+    const qty = serialGenerationForm.quantity;
+    if (qty <= 0 || qty > 100) {
+      return showStatus('warning', 'Serial generation limited to 1-100 units per batch');
+    }
+    
+    const prefix = currentItem?.serialPrefix || `SN-${currentItem?.itemCode || 'ITEM'}`;
+    const timestamp = Date.now().toString().slice(-4);
+    const serials = Array.from({ length: qty }, (_, i) => ({
+      serialNumber: `${prefix}-${timestamp}-${String(i + 1).padStart(4, '0')}`
+    }));
+
+    setSerialGenerationForm(prev => ({ ...prev, generatedSerials: serials }));
   };
 
   // --- TRANSACTION EXECUTION ---
@@ -3493,19 +1199,22 @@ export default function MobileScanner({
         quantity: parseFloat(txForm.quantity),
       };
 
+      // Add Serials if generated
+      if (serialGenerationForm.generatedSerials.length > 0) {
+        payload.serialNumbers = serialGenerationForm.generatedSerials.map(s => s.serialNumber);
+      }
+
       if (activeTab === 'po') {
         if (!selectedPo || !currentPoLine) return showStatus('error', 'Valid PO Line required');
         if (payload.quantity > currentPoLine.pendingQty) return showStatus('error', 'Exceeds PO pending amount');
         
         endpoint = '/purchase-orders/receive';
         payload.poId = selectedPo.id;
-        // Strictly uses user input, else falls back to generic generated lot
         payload.lotNumber = txForm.lotNumber?.trim() || `LOT-${Date.now().toString().slice(-6)}`;
         payload.scannerDeviceId = 'MOBILE-SCAN';
       } 
       else if (activeTab === 'stock' && txMode === 'in') {
         endpoint = '/stock/in';
-        // Strictly uses whatever custom string the user typed (e.g. "gbighh")
         payload.lotNumber = txForm.lotNumber?.trim() || null;
       } 
       else if (activeTab === 'stock' && txMode === 'out') {
@@ -3524,6 +1233,8 @@ export default function MobileScanner({
       showStatus('success', response.data?.message || `Transaction recorded successfully`);
       
       resetScanState();
+      setSerialGenerationForm({ quantity: 0, generatedSerials: [] });
+      setShowSerialModal(false);
       fetchData();
       if (activeTab === 'po') void loadPendingPurchaseOrders();
       void startCamera();
@@ -3533,6 +1244,11 @@ export default function MobileScanner({
     } finally {
       setLoading(false);
     }
+  };
+
+  // *** THIS IS THE MISSING FUNCTION THAT FIXES THE ERROR ***
+  const confirmStockTransactionWithSerials = () => {
+    handleStockTransaction();
   };
 
   const getAlertClass = (type) => {
@@ -3545,62 +1261,70 @@ export default function MobileScanner({
   return (
     <div className="bg-white p-3 p-md-4 h-100 d-flex flex-column">
       
-      {/* CAMERA VIEWFINDER */}
-      <div className="position-relative bg-dark rounded-3 overflow-hidden shadow-sm mb-3" style={{ minHeight: '220px' }}>
-        <video ref={videoRef} className="w-100 h-100 object-fit-cover" autoPlay muted playsInline />
-        <div className="position-absolute top-0 start-0 w-100 h-100 d-flex flex-column align-items-center justify-content-center" style={{ pointerEvents: 'none' }}>
-          <div className="scanner-laser" style={{ width: '70%', height: '2px', backgroundColor: '#10b981', boxShadow: '0 0 10px #10b981' }}></div>
-          <div className="text-white fw-bold mt-3 px-3 py-1 rounded" style={{ backgroundColor: 'rgba(0,0,0,0.5)', fontSize: '0.8rem' }}>
-            {cameraActive ? 'Scanning for barcodes...' : 'Camera Offline'}
-          </div>
-        </div>
-      </div>
-
-      {cameraError && <div className="alert alert-danger py-2 small fw-bold">⚠️ {cameraError}</div>}
-
-      {/* MANUAL INPUT */}
-      <form onSubmit={handleManualSubmit} className="d-flex gap-2 mb-3">
-        <input type="text" className="form-control erp-input font-monospace" placeholder="Manual barcode entry..." value={manualInput} onChange={(e) => setManualInput(e.target.value)} />
-        <button type="submit" className="btn btn-primary erp-btn px-4" disabled={!manualInput}>Lookup</button>
-      </form>
-
-      {/* STATUS NOTIFICATIONS */}
-      {status.text && (
-        <div className={`alert erp-alert py-2 fw-bold ${getAlertClass(status.type)}`}>
-          {status.text}
-        </div>
-      )}
-
-      {/* DETECTED ITEM CARD */}
-      {currentItem && (
-        <div className="alert alert-success d-flex flex-column mb-3 py-2 border-success shadow-sm">
-          <div className="d-flex justify-content-between align-items-center">
-             <span className="fw-bold font-monospace fs-5">{currentItem.itemCode}</span>
-             <button className="btn btn-sm btn-outline-danger erp-btn py-0 px-2" onClick={() => { resetScanState(); void startCamera(); }}>Clear</button>
-          </div>
-          <span className="small text-dark mt-1">{currentItem.description}</span>
-          {activeTab === 'po' && currentPoLine && (
-            <div className="mt-2 pt-2 border-top border-success d-flex justify-content-between small fw-bold">
-              <span>PO Line Matched</span>
-              <span>Pending: {currentPoLine.pendingQty}</span>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* TOP NAVIGATION TABS */}
-      <ul className="nav nav-tabs mb-3 border-bottom-0">
+      <ul className="nav nav-tabs mb-3 border-bottom-0 flex-nowrap overflow-auto" style={{ whiteSpace: 'nowrap' }}>
         <li className="nav-item">
-          <button className={`nav-link fw-bold ${activeTab === 'stock' ? 'active bg-light border-bottom-0 text-primary' : 'text-muted'}`} onClick={() => { setActiveTab('stock'); resetScanState(); void startCamera(); }}>
+          <button className={`nav-link fw-bold px-3 ${activeTab === 'stock' ? 'active bg-light border-bottom-0 text-primary' : 'text-muted'}`} onClick={() => { setActiveTab('stock'); resetScanState(); }}>
             📦 Stock Ops
           </button>
         </li>
         <li className="nav-item">
-          <button className={`nav-link fw-bold ${activeTab === 'po' ? 'active bg-light border-bottom-0 text-primary' : 'text-muted'}`} onClick={() => { setActiveTab('po'); resetScanState(); void startCamera(); }}>
+          <button className={`nav-link fw-bold px-3 ${activeTab === 'po' ? 'active bg-light border-bottom-0 text-primary' : 'text-muted'}`} onClick={() => { setActiveTab('po'); resetScanState(); }}>
             🛒 PO Receiving
           </button>
         </li>
+        <li className="nav-item">
+          <button className={`nav-link fw-bold px-3 ${activeTab === 'create' ? 'active bg-light border-bottom-0 text-success' : 'text-muted'}`} onClick={() => { setActiveTab('create'); resetScanState(); }}>
+            ➕ Add Item
+          </button>
+        </li>
       </ul>
+
+      {/* CAMERA & SCANNER (Hidden in Create Mode) */}
+      {activeTab !== 'create' && (
+        <>
+          <div className="position-relative bg-dark rounded-3 overflow-hidden shadow-sm mb-3" style={{ minHeight: '220px' }}>
+            <video ref={videoRef} className="w-100 h-100 object-fit-cover" autoPlay muted playsInline />
+            <div className="position-absolute top-0 start-0 w-100 h-100 d-flex flex-column align-items-center justify-content-center" style={{ pointerEvents: 'none' }}>
+              <div className="scanner-laser" style={{ width: '70%', height: '2px', backgroundColor: '#10b981', boxShadow: '0 0 10px #10b981' }}></div>
+              <div className="text-white fw-bold mt-3 px-3 py-1 rounded" style={{ backgroundColor: 'rgba(0,0,0,0.5)', fontSize: '0.8rem' }}>
+                {cameraActive ? 'Scanning for barcodes...' : 'Camera Offline'}
+              </div>
+            </div>
+          </div>
+
+          {cameraError && <div className="alert alert-danger py-2 small fw-bold">⚠️ {cameraError}</div>}
+
+          <form onSubmit={handleManualSubmit} className="d-flex gap-2 mb-3">
+            <input type="text" className="form-control erp-input font-monospace" placeholder="Manual barcode entry..." value={manualInput} onChange={(e) => setManualInput(e.target.value)} />
+            <button type="submit" className="btn btn-primary erp-btn px-4" disabled={!manualInput}>Lookup</button>
+          </form>
+
+          {/* STATUS NOTIFICATIONS */}
+          {status.text && (
+            <div className={`alert erp-alert py-2 fw-bold ${getAlertClass(status.type)}`}>
+              {status.text}
+            </div>
+          )}
+
+          {/* DETECTED ITEM CARD */}
+          {currentItem && (
+            <div className="alert alert-success d-flex flex-column mb-3 py-2 border-success shadow-sm">
+              <div className="d-flex justify-content-between align-items-center">
+                 <span className="fw-bold font-monospace fs-5">{currentItem.itemCode}</span>
+                 <button className="btn btn-sm btn-outline-danger erp-btn py-0 px-2" onClick={() => { resetScanState(); void startCamera(); }}>Clear</button>
+              </div>
+              <span className="small text-dark mt-1">{currentItem.description}</span>
+              {activeTab === 'po' && currentPoLine && (
+                <div className="mt-2 pt-2 border-top border-success d-flex justify-content-between small fw-bold">
+                  <span>PO Line Matched</span>
+                  <span>Pending: {currentPoLine.pendingQty}</span>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
 
       {/* ========================================= */}
       {/* TAB 1: STOCK OPERATIONS (IN/OUT/TRANSFER) */}
@@ -3629,24 +1353,24 @@ export default function MobileScanner({
                 <div className="row g-2 mb-3">
                   <div className="col-4">
                     <label className="erp-label">Qty <span className="text-danger">*</span></label>
-                    <input type="number" className="form-control erp-input font-monospace text-end fw-bold" value={txForm.quantity} onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })} min="1" placeholder="0" />
+                    <input type="number" className="form-control erp-input font-monospace text-end fw-bold text-primary" value={txForm.quantity} onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })} min="1" placeholder="0" />
                   </div>
 
                   {txMode === 'in' ? (
                     <div className="col-8">
-                      <label className="erp-label">Lot / Batch Number</label>
+                      <label className="erp-label">Assign Lot / Batch Number</label>
                       <input 
                         type="text" 
                         className="form-control erp-input font-monospace" 
                         value={txForm.lotNumber} 
                         onChange={(e) => setTxForm({ ...txForm, lotNumber: e.target.value })} 
-                        placeholder="Type lot code..." 
+                        placeholder="Type lot string..." 
                       />
                     </div>
                   ) : (
                     <div className="col-8">
                       <label className="erp-label">Source Lot <span className="text-danger">*</span></label>
-                      <select className="form-select erp-input font-monospace" value={txForm.lotId} onChange={(e) => setTxForm({ ...txForm, lotId: e.target.value })}>
+                      <select className="form-select erp-input font-monospace" value={txForm.lotId} onChange={(e) => setTxForm({ ...txForm, lotId: e.target.value })} disabled={lotsLoading}>
                         <option value="">{lotsLoading ? 'Loading...' : '-- Select --'}</option>
                         {availableLots.filter(l => l.quantity > 0).map((lot) => (
                           <option key={`${lot.lotId}-${lot.lotNumber}`} value={lot.lotId}>
@@ -3672,8 +1396,11 @@ export default function MobileScanner({
                   </div>
                 )}
 
-                <div className="d-flex pt-3 border-top mt-auto">
-                  <button type="button" onClick={handleStockTransaction} disabled={loading || !txForm.itemId || !txForm.quantity} className={`btn erp-btn w-100 py-2 fw-bold ${txMode === 'in' ? 'btn-success' : txMode === 'out' ? 'btn-danger' : 'btn-warning text-dark'}`}>
+                <div className="d-flex flex-column gap-2 pt-3 border-top mt-auto">
+                  <button type="button" onClick={openSerialGenerationModal} disabled={loading || !txForm.itemId || !txForm.warehouseId || !txForm.quantity} className="btn btn-outline-primary erp-btn w-100 fw-bold">
+                    + ASSIGN SERIAL NUMBERS
+                  </button>
+                  <button type="button" onClick={handleStockTransaction} disabled={loading || !txForm.itemId || !txForm.warehouseId || !txForm.quantity} className={`btn erp-btn w-100 py-2 fw-bold ${txMode === 'in' ? 'btn-success' : txMode === 'out' ? 'btn-danger' : 'btn-warning text-dark'}`}>
                     {loading ? 'PROCESSING...' : txMode === 'in' ? 'EXECUTE RECEIPT' : txMode === 'out' ? 'EXECUTE DISPATCH' : 'EXECUTE TRANSFER'}
                   </button>
                 </div>
@@ -3719,14 +1446,17 @@ export default function MobileScanner({
                 <div className="row g-2 mb-3">
                   <div className="col-4">
                     <label className="erp-label">Qty <span className="text-danger">*</span></label>
-                    <input type="number" className="form-control erp-input font-monospace text-end fw-bold" value={txForm.quantity} onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })} min="1" placeholder="0" />
+                    <input type="number" className="form-control erp-input font-monospace text-end fw-bold text-primary" value={txForm.quantity} onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })} min="1" placeholder="0" />
                   </div>
                   <div className="col-8">
                     <label className="erp-label">Assign Lot Number</label>
                     <input type="text" className="form-control erp-input font-monospace" value={txForm.lotNumber} onChange={(e) => setTxForm({ ...txForm, lotNumber: e.target.value })} placeholder="Type custom lot..." />
                   </div>
                 </div>
-                <div className="d-flex pt-3 border-top mt-auto">
+                <div className="d-flex flex-column gap-2 pt-3 border-top mt-auto">
+                  <button type="button" onClick={openSerialGenerationModal} disabled={loading || !txForm.quantity || !currentPoLine} className="btn btn-outline-primary erp-btn w-100 fw-bold">
+                    + ASSIGN SERIAL NUMBERS
+                  </button>
                   <button type="button" onClick={handleStockTransaction} disabled={loading || !txForm.quantity || !currentPoLine} className="btn btn-primary erp-btn w-100 py-2 fw-bold">
                     {loading ? 'PROCESSING...' : 'RECEIVE PO STOCK'}
                   </button>
@@ -3739,48 +1469,121 @@ export default function MobileScanner({
       )}
 
       {/* ========================================= */}
-      {/* 404 INTERCEPT: ON-THE-FLY ITEM CREATION   */}
+      {/* TAB 3: 404 INTERCEPT: ON-THE-FLY CREATION */}
       {/* ========================================= */}
-      {showCreateForm && (
+      {activeTab === 'create' && (
+        <div className="erp-panel shadow-sm flex-grow-1 d-flex flex-column bg-light border-top-0 rounded-top-0">
+          <div className="p-4 bg-white flex-grow-1 d-flex flex-column rounded-bottom overflow-auto">
+            <h6 className="erp-section-title mb-4">Register New SKU</h6>
+            <form onSubmit={handleCreateProduct}>
+              {productForm.barcode && (
+                <div className="alert alert-warning py-2 small fw-bold mb-4 border-warning">
+                  Barcode <span className="font-monospace text-dark">{productForm.barcode}</span> is not in the system. Register it to continue.
+                </div>
+              )}
+              
+              <div className="mb-3">
+                <label className="erp-label">Item Code <span className="text-danger">*</span></label>
+                <input className="form-control erp-input font-monospace" placeholder="e.g. SKU-001" value={productForm.itemCode} onChange={(e) => setProductForm({ ...productForm, itemCode: e.target.value })} required />
+              </div>
+              <div className="mb-3">
+                <label className="erp-label">Barcode</label>
+                <input className="form-control erp-input font-monospace" value={productForm.barcode} onChange={(e) => setProductForm({ ...productForm, barcode: e.target.value })} placeholder="Type or scan..." />
+              </div>
+              <div className="mb-3">
+                <label className="erp-label">Description <span className="text-danger">*</span></label>
+                <textarea className="form-control erp-input" rows="2" value={productForm.description} onChange={(e) => setProductForm({ ...productForm, description: e.target.value })} required />
+              </div>
+
+              <div className="row g-2 mb-4">
+                <div className="col-6">
+                  <label className="erp-label">Unit Price</label>
+                  <input type="number" step="0.01" className="form-control erp-input font-monospace" value={productForm.price} onChange={(e) => setProductForm({ ...productForm, price: Number(e.target.value) })} />
+                </div>
+                <div className="col-6">
+                  <label className="erp-label">Category</label>
+                  <input className="form-control erp-input" placeholder="General" value={productForm.category} onChange={(e) => setProductForm({ ...productForm, category: e.target.value })} />
+                </div>
+              </div>
+
+              <div className="d-flex justify-content-between align-items-center bg-light p-2 border rounded mt-2">
+                <div className="form-check form-switch mt-1">
+                  <input className="form-check-input" type="checkbox" id="createLotTrack" checked={productForm.isLotTracked} onChange={(e) => setProductForm({ ...productForm, isLotTracked: e.target.checked })} />
+                  <label className="form-check-label erp-label m-0" htmlFor="createLotTrack">Enable Lot/Serial Tracking</label>
+                </div>
+                {productForm.isLotTracked && (
+                  <div style={{ width: "120px" }}>
+                    <input className="form-control form-control-sm erp-input font-monospace" placeholder="Serial Prefix" value={productForm.serialPrefix} onChange={(e) => setProductForm({ ...productForm, serialPrefix: e.target.value })} />
+                  </div>
+                )}
+              </div>
+
+              <div className="d-flex justify-content-end gap-2 pt-3 border-top mt-4">
+                <button type="button" className="btn btn-light border erp-btn" onClick={() => { setActiveTab('stock'); void startCamera(); }}>Cancel</button>
+                <button type="submit" className="btn btn-success erp-btn px-4 fw-bold" disabled={createLoading}>
+                  {createLoading ? 'Saving...' : 'Register & Resume'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================= */}
+      {/* SERIAL GENERATION MODAL (All TX Modes)    */}
+      {/* ========================================= */}
+      {showSerialModal && (
         <div className="erp-modal-overlay" style={{ zIndex: 1100 }}>
           <div className="erp-dialog erp-dialog-md w-100 m-3 shadow-lg">
             <div className="erp-dialog-header">
-              <h6 className="m-0 fw-bold">Unrecognized Barcode Detected</h6>
-              <button className="btn-close btn-close-white" onClick={() => { setShowCreateForm(false); void startCamera(); }}></button>
+              <h6 className="m-0 fw-bold">Serial Number Allocation</h6>
+              <button className="btn-close btn-close-white" onClick={() => setShowSerialModal(false)}></button>
             </div>
-            <div className="erp-dialog-body bg-white p-4">
-              <form onSubmit={handleCreateProduct}>
-                <div className="alert alert-warning py-2 small fw-bold mb-4 border-warning">
-                  Barcode <span className="font-monospace text-dark">{productForm.barcode}</span> is not in the system. Register it to continue scanning.
+            <div className="erp-dialog-body p-3 bg-white">
+              <div className="d-flex justify-content-between align-items-center mb-3 p-2 bg-light border rounded">
+                <div>
+                  <span className="erp-label m-0">Target Qty</span>
+                  <span className="fs-5 fw-bold font-monospace text-primary">{serialGenerationForm.quantity}</span>
                 </div>
-                
-                <div className="mb-3">
-                  <label className="erp-label">Item Code <span className="text-danger">*</span></label>
-                  <input className="form-control erp-input font-monospace" placeholder="e.g. SKU-001" value={productForm.itemCode} onChange={(e) => setProductForm({ ...productForm, itemCode: e.target.value })} required />
-                </div>
-                <div className="mb-3">
-                  <label className="erp-label">Description <span className="text-danger">*</span></label>
-                  <textarea className="form-control erp-input" rows="2" value={productForm.description} onChange={(e) => setProductForm({ ...productForm, description: e.target.value })} required />
-                </div>
+                <button className="btn btn-sm btn-outline-primary fw-bold erp-btn" onClick={generateSerialNumbers}>
+                  + Generate Sequence
+                </button>
+              </div>
 
-                <div className="row g-2 mb-4">
-                  <div className="col-6">
-                    <label className="erp-label">Unit Price</label>
-                    <input type="number" step="0.01" className="form-control erp-input font-monospace" value={productForm.price} onChange={(e) => setProductForm({ ...productForm, price: Number(e.target.value) })} />
-                  </div>
-                  <div className="col-6">
-                    <label className="erp-label">Category</label>
-                    <input className="form-control erp-input" placeholder="General" value={productForm.category} onChange={(e) => setProductForm({ ...productForm, category: e.target.value })} />
-                  </div>
+              {serialGenerationForm.generatedSerials.length > 0 ? (
+                <div className="border rounded overflow-hidden" style={{ maxHeight: '250px', overflowY: 'auto' }}>
+                  <table className="table table-sm table-striped m-0 font-monospace" style={{ fontSize: '0.8rem' }}>
+                    <thead className="table-light sticky-top">
+                      <tr>
+                        <th className="ps-3 text-uppercase text-muted">S/N</th>
+                        <th className="text-uppercase text-muted">Generated Identifier</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {serialGenerationForm.generatedSerials.map((s, i) => (
+                        <tr key={i}>
+                          <td className="ps-3 text-muted">{i + 1}</td>
+                          <td className="fw-bold">{s.serialNumber}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-
-                <div className="d-flex justify-content-end gap-2 pt-3 border-top mt-3">
-                  <button type="button" className="btn btn-light border erp-btn" onClick={() => { setShowCreateForm(false); void startCamera(); }}>Cancel</button>
-                  <button type="submit" className="btn btn-primary erp-btn px-4 fw-bold" disabled={createLoading}>
-                    {createLoading ? 'Saving...' : 'Register & Resume'}
-                  </button>
+              ) : (
+                <div className="text-center py-4 text-muted small border rounded bg-light">
+                  Click generate to assign unique serials for this transaction.
                 </div>
-              </form>
+              )}
+            </div>
+            <div className="p-3 bg-light border-top d-flex justify-content-end gap-2">
+              <button className="btn btn-light border erp-btn" onClick={() => setShowSerialModal(false)}>Cancel</button>
+              <button 
+                className="btn btn-primary erp-btn px-4" 
+                onClick={confirmStockTransactionWithSerials}
+                disabled={serialGenerationForm.generatedSerials.length === 0 || loading}
+              >
+                {loading ? 'Saving...' : 'Commit to Ledger'}
+              </button>
             </div>
           </div>
         </div>
