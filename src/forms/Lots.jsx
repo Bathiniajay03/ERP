@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { smartErpApi } from "../services/smartErpApi";
 
 export default function Lots() {
@@ -11,6 +11,14 @@ export default function Lots() {
   
   // State for the modal
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [lotSerials, setLotSerials] = useState({});
+  const [serialsLoadingLot, setSerialsLoadingLot] = useState(null);
+  const [serialsErrorLot, setSerialsErrorLot] = useState('');
+  const [openLotForSerials, setOpenLotForSerials] = useState(null);
+  const [detailSerial, setDetailSerial] = useState(null);
+  const [serialModalStatus, setSerialModalStatus] = useState({ type: "", text: "" });
+  const [modalDispatching, setModalDispatching] = useState(false);
+  const barcodeRef = useRef(null);
 
   useEffect(() => {
     const loadDetails = async () => {
@@ -41,8 +49,10 @@ export default function Lots() {
     const warehousesById = new Map(warehouses.map((warehouse) => [warehouse.id, warehouse]));
 
     return inventory.map((entry) => {
-      const warehouse = warehousesById.get(entry.WarehouseId || entry.warehouseId);
-      const item = itemsById.get(entry.ItemId || entry.itemId);
+      const resolvedItemId = entry.ItemId ?? entry.itemId;
+      const resolvedWarehouseId = entry.WarehouseId ?? entry.warehouseId;
+      const warehouse = warehousesById.get(resolvedWarehouseId);
+      const item = itemsById.get(resolvedItemId);
       const lotNumber =
         (entry.lotNumber || entry.LotNumber || entry.lotId || "").trim() === "-" ||
         !(entry.lotNumber || entry.LotNumber)
@@ -54,6 +64,8 @@ export default function Lots() {
       return {
         id: entry.id ?? entry.Id,
         lotId: entry.lotId ?? entry.LotId,
+        itemId: resolvedItemId,
+        warehouseId: resolvedWarehouseId,
         lotNumber,
         itemCode: item?.itemCode || `Item-${entry.itemId || entry.ItemId}`,
         itemName: item?.description || "Unknown product",
@@ -72,6 +84,7 @@ export default function Lots() {
       if (!groups[row.itemCode]) {
         groups[row.itemCode] = {
           itemCode: row.itemCode,
+          itemId: row.itemId,
           itemName: row.itemName,
           totalQuantity: 0,
           lots: []
@@ -112,6 +125,140 @@ export default function Lots() {
       quantity: totalQuantity
     };
   }, [inventoryRows, groupedProducts]);
+
+  const loadLotSerials = useCallback(async (lot) => {
+    if (!selectedProduct?.itemId || !lot?.lotId || !lot?.warehouseId) return;
+    const lotId = lot.lotId;
+    setSerialsErrorLot('');
+    setSerialsLoadingLot(lotId);
+    try {
+      const response = await smartErpApi.stockSerials({
+        itemId: selectedProduct.itemId,
+        warehouseId: lot.warehouseId,
+        lotId,
+        lotNumber: lot.lotNumber
+      });
+      const payload = Array.isArray(response.data) ? response.data : [];
+      setLotSerials((prev) => ({
+        ...prev,
+        [lotId]: payload.map((serial) => ({
+          ...serial,
+          warehouseId: lot.warehouseId,
+          warehouseName: lot.warehouseName,
+          lotNumber: lot.lotNumber,
+          lotId
+        }))
+      }));
+    } catch (error) {
+      console.error("Failed to load lot serials", error);
+      setLotSerials((prev) => ({ ...prev, [lotId]: [] }));
+      setSerialsErrorLot("Unable to load serial numbers for this lot.");
+    } finally {
+      setSerialsLoadingLot(null);
+    }
+  }, [selectedProduct]);
+
+  const toggleLotSerials = useCallback((lot) => {
+    if (!lot.lotId || !lot.warehouseId) return;
+
+      if (openLotForSerials === lot.lotId) {
+        setOpenLotForSerials(null);
+        return;
+      }
+
+      setOpenLotForSerials(lot.lotId);
+      if (!lotSerials[lot.lotId]) {
+        loadLotSerials(lot);
+      }
+  }, [lotSerials, loadLotSerials, openLotForSerials]);
+
+  useEffect(() => {
+    setLotSerials({});
+    setOpenLotForSerials(null);
+    setSerialsErrorLot('');
+  }, [selectedProduct?.itemId]);
+
+  const showSerialDetails = useCallback((serial, lot) => {
+    if (!serial) return;
+    setDetailSerial({
+      ...serial,
+      warehouseId: lot?.warehouseId,
+      warehouseName: lot?.warehouseName,
+      lotNumber: lot?.lotNumber,
+      lotId: lot?.lotId,
+      itemId: selectedProduct?.itemId,
+      itemCode: selectedProduct?.itemCode
+    });
+    setSerialModalStatus({ type: "", text: "" });
+  }, [selectedProduct]);
+
+  const closeSerialModal = useCallback(() => {
+    setDetailSerial(null);
+  }, []);
+
+  useEffect(() => {
+    if (!detailSerial || !barcodeRef.current || typeof window === "undefined" || !window.JsBarcode) return;
+    try {
+      window.JsBarcode(barcodeRef.current, detailSerial.serialNumber, {
+        format: "CODE128",
+        width: 2,
+        height: 60,
+        displayValue: true,
+        margin: 6
+      });
+    } catch (error) {
+      console.warn("Barcode rendering failed", error);
+    }
+  }, [detailSerial]);
+
+  const copySerialNumber = useCallback(async () => {
+    if (!detailSerial) return;
+    try {
+      await navigator.clipboard.writeText(detailSerial.serialNumber);
+      setSerialModalStatus({ type: "success", text: "Serial copied to clipboard." });
+    } catch {
+      setSerialModalStatus({ type: "error", text: "Unable to copy serial." });
+    }
+  }, [detailSerial]);
+
+  const downloadSerialBarcode = useCallback(() => {
+    if (!detailSerial || !barcodeRef.current) return;
+    const svgElement = barcodeRef.current;
+    const serializer = new XMLSerializer();
+    const svgString = serializer.serializeToString(svgElement);
+    const blob = new Blob([svgString], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${detailSerial.serialNumber}-barcode.svg`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [detailSerial]);
+
+  const dispatchSerialFromModal = useCallback(async () => {
+    if (!detailSerial) return;
+    setModalDispatching(true);
+    try {
+      await smartErpApi.stockOut({
+        itemId: detailSerial.itemId,
+        warehouseId: detailSerial.warehouseId,
+        quantity: 1,
+        lotNumber: detailSerial.lotNumber,
+        serialNumbers: [detailSerial.serialNumber],
+        reason: "Serial dispatched from lot view"
+      });
+      setSerialModalStatus({ type: "success", text: "Serial dispatched successfully." });
+      setLotSerials((prev) => ({
+        ...prev,
+        [detailSerial.lotId]: prev[detailSerial.lotId]?.filter((serial) => serial.id !== detailSerial.id)
+      }));
+      setDetailSerial(null);
+    } catch (error) {
+      setSerialModalStatus({ type: "error", text: error?.response?.data || "Dispatch failed." });
+    } finally {
+      setModalDispatching(false);
+    }
+  }, [detailSerial]);
 
   return (
     <div className="erp-app-wrapper min-vh-100 pb-5 pt-3">
@@ -273,27 +420,79 @@ export default function Lots() {
                         <th>Warehouse</th>
                         <th>Storage / Bin</th>
                         <th className="text-end">Quantity</th>
+                        <th className="text-center">Serials</th>
                         <th className="text-center">Status</th>
                       </tr>
                     </thead>
                     <tbody>
                       {selectedProduct.lots.map((lot) => (
-                        <tr key={`${lot.id}-${lot.lotNumber}`}>
-                          <td className="fw-bold font-monospace text-dark">{lot.lotNumber}</td>
-                          <td className="text-muted">{lot.warehouseName}</td>
-                          <td className="text-muted">
-                            <span className="d-block">{lot.storage}</span>
-                            {lot.locationCode !== 'N/A' && <span className="small text-secondary">Bin: {lot.locationCode}</span>}
-                          </td>
-                          <td className="text-end fw-bold font-monospace">
-                            {lot.quantity.toFixed(2)}
-                          </td>
-                          <td className="text-center">
-                            <span className={`erp-status-tag ${lot.quantity > 0 ? 'tag-success' : 'tag-danger'}`}>
-                              {lot.quantity > 0 ? 'AVAILABLE' : 'DEPLETED'}
-                            </span>
-                          </td>
-                        </tr>
+                        <React.Fragment key={`${lot.id}-${lot.lotNumber}`}>
+                          <tr>
+                            <td className="fw-bold font-monospace text-dark">{lot.lotNumber}</td>
+                            <td className="text-muted">{lot.warehouseName}</td>
+                            <td className="text-muted">
+                              <span className="d-block">{lot.storage}</span>
+                              {lot.locationCode !== 'N/A' && <span className="small text-secondary">Bin: {lot.locationCode}</span>}
+                            </td>
+                            <td className="text-end fw-bold font-monospace">
+                              {lot.quantity.toFixed(2)}
+                            </td>
+                            <td className="text-center">
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline-secondary"
+                              onClick={() => toggleLotSerials(lot)}
+                              disabled={!lot.lotId}
+                              title={!lot.lotId ? "Lot not assigned" : undefined}
+                            >
+                              {openLotForSerials === lot.lotId ? 'Hide Serials' : 'View Serials'}
+                            </button>
+                            </td>
+                            <td className="text-center">
+                              <span className={`erp-status-tag ${lot.quantity > 0 ? 'tag-success' : 'tag-danger'}`}>
+                                {lot.quantity > 0 ? 'AVAILABLE' : 'DEPLETED'}
+                              </span>
+                            </td>
+                          </tr>
+                          {openLotForSerials === lot.lotId && (
+                            <tr>
+                              <td colSpan="6" className="bg-light serial-detail">
+                                {serialsLoadingLot === lot.lotId ? (
+                                  <div className="text-muted small py-2">Loading serial numbers...</div>
+                                ) : serialsErrorLot ? (
+                                  <div className="text-danger small py-2">{serialsErrorLot}</div>
+                                ) : lotSerials[lot.lotId]?.length ? (
+                                  <div className="d-flex flex-wrap gap-2">
+                                {lotSerials[lot.lotId].map((serial) => (
+                                  <div
+                                    key={serial.id}
+                                    className="serial-chip"
+                                    role="button"
+                                    tabIndex={0}
+                                    title="Click to view serial details and actions"
+                                    onClick={() => showSerialDetails(serial, lot)}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter" || event.key === " ") {
+                                        event.preventDefault();
+                                        showSerialDetails(serial, lot);
+                                      }
+                                    }}
+                                  >
+                                    <div className="fw-bold">{serial.serialNumber}</div>
+                                    <div className="text-muted small">{serial.status}</div>
+                                    {serial.purchaseOrderNumber && (
+                                      <div className="text-muted small">PO: {serial.purchaseOrderNumber}</div>
+                                    )}
+                                  </div>
+                                ))}
+                                  </div>
+                                ) : (
+                                  <div className="text-muted small py-2">No serial numbers linked to this lot.</div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
                       ))}
                     </tbody>
                   </table>
@@ -303,6 +502,77 @@ export default function Lots() {
             
             <div className="p-3 bg-white border-top text-end">
               <button className="btn btn-secondary erp-btn px-4" onClick={() => setSelectedProduct(null)}>Close Window</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {detailSerial && (
+        <div className="erp-modal-overlay" onClick={closeSerialModal}>
+          <div className="erp-dialog erp-dialog-md" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header d-flex justify-content-between align-items-center">
+              <div>
+                <h5 className="m-0 fw-bold">{detailSerial.serialNumber}</h5>
+                <small className="opacity-75">Serial details & barcode</small>
+              </div>
+              <button className="btn-close btn-close-white" onClick={closeSerialModal}></button>
+            </div>
+            <div className="erp-dialog-body p-3">
+              {serialModalStatus.text && (
+                <div className={`alert ${serialModalStatus.type === "error" ? "alert-danger" : "alert-success"} py-2 small`}>
+                  {serialModalStatus.text}
+                </div>
+              )}
+              <div className="row g-3">
+                <div className="col-md-6">
+                  <div className="text-muted small">Serial Number</div>
+                  <div className="fw-bold font-monospace">{detailSerial.serialNumber}</div>
+                </div>
+                <div className="col-md-6">
+                  <div className="text-muted small">Item Code</div>
+                  <div>{detailSerial.itemCode || `Item ${detailSerial.itemId || "N/A"}`}</div>
+                </div>
+                <div className="col-md-6">
+                  <div className="text-muted small">Warehouse</div>
+                  <div>{detailSerial.warehouseName || `WH-${detailSerial.warehouseId || "N/A"}`}</div>
+                </div>
+                <div className="col-md-6">
+                  <div className="text-muted small">Lot</div>
+                  <div>{detailSerial.lotNumber || "General"}</div>
+                </div>
+                <div className="col-md-6">
+                  <div className="text-muted small">Status</div>
+                  <div className="fw-semibold">{detailSerial.status}</div>
+                </div>
+                {detailSerial.purchaseOrderNumber && (
+                  <div className="col-md-6">
+                    <div className="text-muted small">Purchase Order</div>
+                    <div>{detailSerial.purchaseOrderNumber}</div>
+                  </div>
+                )}
+              </div>
+              <div className="barcode-preview mt-4 text-center border rounded p-3">
+                <svg ref={barcodeRef} aria-label="Serial barcode"></svg>
+                <div className="text-muted small mt-2">{detailSerial.serialNumber}</div>
+              </div>
+              <div className="d-flex flex-wrap gap-2 mt-3">
+                <button type="button" className="btn btn-outline-secondary btn-sm" onClick={copySerialNumber}>
+                  Copy Serial
+                </button>
+                <button type="button" className="btn btn-outline-secondary btn-sm" onClick={downloadSerialBarcode}>
+                  Download Barcode
+                </button>
+                {detailSerial.status === "AVAILABLE" && (
+                  <button
+                    type="button"
+                    className="btn btn-success flex-grow-1"
+                    onClick={dispatchSerialFromModal}
+                    disabled={modalDispatching}
+                  >
+                    {modalDispatching ? "Dispatching..." : "Dispatch Serial"}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -451,6 +721,7 @@ export default function Lots() {
           to { opacity: 1; transform: translateY(0); }
         }
         .erp-dialog-lg { max-width: 900px; }
+        .erp-dialog-md { max-width: 520px; }
         .erp-dialog-header {
           background-color: var(--erp-primary);
           color: white;
@@ -459,6 +730,24 @@ export default function Lots() {
         }
         .erp-dialog-body {
           overflow-y: auto;
+        }
+        .serial-detail {
+          padding: 12px;
+          border-radius: 4px;
+        }
+        .serial-chip {
+          border: 1px solid var(--erp-border);
+          border-radius: 4px;
+          padding: 8px 12px;
+          background: #f8fafc;
+          cursor: pointer;
+        }
+        .serial-chip:focus-visible {
+          outline: 2px solid var(--erp-primary);
+        }
+        .barcode-preview svg {
+          width: 100%;
+          height: 88px;
         }
         .erp-section-title {
           font-size: 0.75rem;

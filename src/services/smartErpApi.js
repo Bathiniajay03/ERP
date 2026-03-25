@@ -173,6 +173,8 @@ export const smartErpApi = {
   stockInventory: () =>
     api.get("/stock/inventory"),
 
+  stockSerials: (params = {}) => api.get("/stock/serials", { params }),
+
   stockTransactions: () =>
     api.get("/stock/transactions"),
 

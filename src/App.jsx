@@ -24,6 +24,7 @@ import SalesOrderList from "./forms/SalesOrderList";
 import Vendors from "./forms/Vendors";
 import StockAlerts from "./forms/StockAlerts";
 import ScannerDevicePage from "./pages/ScannerDevicePage";
+import SerialScanPage from "./pages/SerialScanPage";
 
 import { smartErpApi } from "./services/smartErpApi";
 import { LocalAIProvider } from "./context/LocalAIContext";
@@ -58,6 +59,7 @@ const MODULE_CONFIG = [
   { id: "vendorReturns", label: "Vendor Returns", path: "/vendor-returns" },
   { id: "localAI", label: "Local AI", path: "/local-ai" },
   { id: "scannerDevice", label: "Scanner Device", path: "/scanner-device" },
+  { id: "serialScan", label: "Serial Scan", path: "/serial-scan" },
   { id: "admin", label: "Admin", path: "/admin" }
 ];
 
@@ -81,11 +83,13 @@ const DEFAULT_ROLE_MODULES = {
     "reports",
     "automation",
     "vendorReturns",
-    "scannerDevice"
+    "scannerDevice",
+    "serialScan"
   ],
   Operator: [
     "operations",
-    "scannerDevice"
+    "scannerDevice",
+    "serialScan"
   ],
   OperationsWorker: [
     "dashboard",
@@ -102,10 +106,12 @@ const DEFAULT_ROLE_MODULES = {
     "notifications",
     "reports",
     "vendorReturns",
-    "scannerDevice"
+    "scannerDevice",
+    "serialScan"
   ],
   ScannerWorker: [
-    "scannerDevice"
+    "scannerDevice",
+    "serialScan"
   ],
   "Warehouse Manager": [
     "dashboard",
@@ -120,7 +126,8 @@ const DEFAULT_ROLE_MODULES = {
     "lots",
     "notifications",
     "vendorReturns",
-    "scannerDevice"
+    "scannerDevice",
+    "serialScan"
   ],
   "Finance Manager": [
     "dashboard",
@@ -134,7 +141,8 @@ const DEFAULT_ROLE_MODULES = {
     "vendors",
     "stockAlerts",
     "vendorReturns",
-    "scannerDevice"
+    "scannerDevice",
+    "serialScan"
   ],
   "Robot Supervisor": ["dashboard", "operations", "automation", "localAI", "notifications", "scannerDevice"],
   User: [
@@ -143,7 +151,8 @@ const DEFAULT_ROLE_MODULES = {
     "salesOrderList",
     "notifications",
     "reports",
-    "scannerDevice"
+    "scannerDevice",
+    "serialScan"
   ]
 };
 
@@ -173,12 +182,16 @@ export default function App() {
     const storedText = window.localStorage.getItem(ROLE_MODULES_KEY);
     const storedVersion = Number(window.localStorage.getItem(ROLE_MODULES_VERSION_KEY) ?? "0");
     const raw = storedText ? JSON.parse(storedText) : DEFAULT_ROLE_MODULES;
-    if (storedVersion >= ROLE_MODULES_VERSION) {
-      return raw;
-    }
     const normalized = normalizeRoleModules(raw);
-    window.localStorage.setItem(ROLE_MODULES_KEY, JSON.stringify(normalized));
-    window.localStorage.setItem(ROLE_MODULES_VERSION_KEY, String(ROLE_MODULES_VERSION));
+    const normalizedText = JSON.stringify(normalized);
+    const needsPersist =
+      storedVersion < ROLE_MODULES_VERSION || storedText !== normalizedText;
+
+    if (needsPersist) {
+      window.localStorage.setItem(ROLE_MODULES_KEY, normalizedText);
+      window.localStorage.setItem(ROLE_MODULES_VERSION_KEY, String(ROLE_MODULES_VERSION));
+    }
+
     return normalized;
   }, [isClient, normalizeRoleModules]);
 
@@ -448,8 +461,9 @@ export default function App() {
                 <Route path="/stock-alerts" element={renderProtectedRoute("stockAlerts", <StockAlerts />)} />
                 <Route path="/reports" element={renderProtectedRoute("reports", <Reports />)} />
                   <Route path="/automation" element={renderProtectedRoute("automation", <Automation />)} />
-                  <Route path="/local-ai" element={renderProtectedRoute("localAI", <LocalAIPage />)} />
-                  <Route path="/scanner-device" element={renderProtectedRoute("scannerDevice", <Operations />)} />
+                <Route path="/local-ai" element={renderProtectedRoute("localAI", <LocalAIPage />)} />
+                <Route path="/scanner-device" element={renderProtectedRoute("scannerDevice", <Operations />)} />
+                <Route path="/serial-scan" element={renderProtectedRoute("serialScan", <SerialScanPage />)} />
               </Routes>
               {toastMessage && (
                 <div className="toast show position-fixed bottom-0 end-0 m-3" role="alert" aria-live="assertive" aria-atomic="true">
