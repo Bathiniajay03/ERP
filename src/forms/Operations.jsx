@@ -123,6 +123,11 @@ export default function Operations() {
   const requiresSerialSelection = isSerialTracked && (txMode === 'out' || txMode === 'transfer');
   const requiresLotNumberForIn = Boolean(selectedItem?.isLotTracked && txMode === 'in');
   const lotNumberValue = txForm.lotNumber?.trim() ?? '';
+  const desiredSerialQty = parseNumber(txForm.quantity) ?? 0;
+  const availableSerialsForAuto = useMemo(
+    () => availableSerials.filter((serial) => serial.status === 'AVAILABLE'),
+    [availableSerials]
+  );
 
   // Load available lots dynamically when item/warehouse changes
   const loadLotOptions = useCallback(async () => {
@@ -239,16 +244,32 @@ export default function Operations() {
 
   const generateSerialNumbers = () => {
     const qty = serialGenerationForm.quantity;
-    if (qty <= 0 || qty > 100) return showStatus('warning', 'Limit: 1-100 units per batch');
-    
+    if (qty <= 0 || qty > 1000) return showStatus('warning', 'Limit: 1-1,000 units per batch');
+
     const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, '');
     const serials = Array.from({ length: qty }, (_, i) => ({
       serialNumber: `${serialGenerationForm.prefix}-${dateStr}-${String(i + 1).padStart(4, '0')}`,
       status: 'Available'
     }));
 
-    setSerialGenerationForm(prev => ({ ...prev, generatedSerials: serials }));
+    setSerialGenerationForm((prev) => ({ ...prev, generatedSerials: serials }));
   };
+
+  const autoSelectSerials = useCallback(() => {
+    if (!requiresSerialSelection) return;
+    if (!desiredSerialQty || desiredSerialQty <= 0) {
+      return showStatus('warning', 'Enter a valid quantity before auto-selecting serial numbers.');
+    }
+    if (availableSerialsForAuto.length < desiredSerialQty) {
+      return showStatus(
+        'warning',
+        `Only ${availableSerialsForAuto.length} available serials found for ${desiredSerialQty} units.`
+      );
+    }
+    setSelectedSerialIds(
+      new Set(availableSerialsForAuto.slice(0, desiredSerialQty).map((serial) => serial.id))
+    );
+  }, [availableSerialsForAuto, desiredSerialQty, requiresSerialSelection, showStatus]);
 
   // --- UNIFIED TRANSACTION PROTOCOL ---
   const handleStockTransaction = async (e) => {
@@ -504,7 +525,7 @@ export default function Operations() {
                     <div className="row g-3 mb-4">
                       <div className="col-md-4">
                         <label className="erp-label">Quantity <span className="text-danger">*</span></label>
-                        <input type="number" className="form-control erp-input font-monospace text-end fw-bold" value={txForm.quantity} onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })} min="0" placeholder="0" />
+                        <input type="number" className="form-control erp-input font-monospace text-end fw-bold" value={txForm.quantity} onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })} min="0" max="1000" placeholder="0" />
                       </div>
 
                       {txMode === 'in' ? (
@@ -638,7 +659,7 @@ export default function Operations() {
                         Scan or choose serials before executing the {txMode.toUpperCase()} transaction.
                       </div>
                     </div>
-                    <div className="d-flex gap-2 align-items-center">
+                    <div className="d-flex gap-2 align-items-center flex-wrap">
                       <button
                         type="button"
                         className="btn btn-sm btn-outline-secondary"
@@ -647,8 +668,21 @@ export default function Operations() {
                       >
                         {serialLoading ? <span className="spinner-border spinner-border-sm" /> : 'Refresh'}
                       </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline-success"
+                        onClick={autoSelectSerials}
+                        disabled={
+                          serialLoading ||
+                          desiredSerialQty <= 0 ||
+                          availableSerialsForAuto.length < desiredSerialQty
+                        }
+                        title="Auto-select the first available serial numbers for the requested quantity"
+                      >
+                        Auto-select {desiredSerialQty > 0 ? desiredSerialQty : 'serials'}
+                      </button>
                       <span className="badge bg-info text-dark">
-                        {selectedSerialIds.size}/{Number(txForm.quantity ?? 0)}
+                        {selectedSerialIds.size}/{desiredSerialQty || 0}
                       </span>
                     </div>
                   </div>

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { smartErpApi } from "../services/smartErpApi";
+import JsBarcode from "jsbarcode";
 
 export default function Lots() {
   const [inventory, setInventory] = useState([]);
@@ -197,9 +198,9 @@ export default function Lots() {
   }, []);
 
   useEffect(() => {
-    if (!detailSerial || !barcodeRef.current || typeof window === "undefined" || !window.JsBarcode) return;
+    if (!detailSerial || !barcodeRef.current) return;
     try {
-      window.JsBarcode(barcodeRef.current, detailSerial.serialNumber, {
+      JsBarcode(barcodeRef.current, detailSerial.serialNumber, {
         format: "CODE128",
         width: 2,
         height: 60,
