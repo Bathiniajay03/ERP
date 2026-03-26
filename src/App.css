@@ -3,10 +3,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background:
-    radial-gradient(circle at 10% 20%, rgba(37, 99, 235, 0.14), transparent 34%),
-    radial-gradient(circle at 90% 80%, rgba(16, 185, 129, 0.14), transparent 28%),
-    linear-gradient(135deg, #eff4ff 0%, #ecf1f8 45%, #dde7f4 100%);
+  background: #f5f7fb;
   padding: 24px;
 }
 
@@ -14,56 +11,60 @@
   width: 100%;
   max-width: 420px;
   background: #ffffff;
-  border-radius: 14px;
-  padding: 28px;
-  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.12);
-  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 36px 28px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  border: 1px solid #dde4f2;
 }
 
 .login-brand {
-  display: inline-block;
-  font-size: 0.78rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
   letter-spacing: 1.4px;
   font-weight: 700;
-  color: #2563eb;
-  background: #dbeafe;
+  color: #0f172a;
+  background: #e2e8f0;
   border-radius: 999px;
-  padding: 6px 10px;
-  margin-bottom: 10px;
+  padding: 4px 12px;
+  margin-bottom: 14px;
 }
 
 .login-title {
   margin: 0;
-  font-size: 1.6rem;
+  font-size: 1.5rem;
   font-weight: 700;
-  color: #0f172a;
+  color: #111827;
 }
 
 .login-subtitle {
-  margin: 8px 0 20px 0;
-  color: #475569;
-  font-size: 0.96rem;
+  margin: 6px 0 18px 0;
+  color: #4b5563;
+  font-size: 0.95rem;
 }
 
 .login-form .form-label {
   font-weight: 600;
-  color: #1e293b;
+  color: #1f2933;
 }
 
 .login-form .form-control {
-  height: 44px;
-  border-radius: 10px;
+  height: 42px;
+  border-radius: 8px;
   border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #111827;
 }
 
 .login-form .form-control:focus {
   border-color: #2563eb;
-  box-shadow: 0 0 0 0.2rem rgba(37, 99, 235, 0.2);
+  box-shadow: 0 0 0 0.15rem rgba(37, 99, 235, 0.25);
 }
 
 .login-form .btn-primary {
   height: 44px;
-  border-radius: 10px;
+  border-radius: 8px;
   font-weight: 600;
 }
 

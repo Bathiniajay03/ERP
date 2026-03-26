@@ -672,14 +672,35 @@ export default function AdminPanel({
   const [moduleRole, setModuleRole] = useState("OperationsWorker");
   const [moduleResult, setModuleResult] = useState("");
   const [selectedModules, setSelectedModules] = useState([]);
+  const formatApiError = (err, fallback = "Request failed") => {
+    const payload = err?.response?.data;
+    if (!payload) return err?.message || fallback;
+    if (typeof payload === "string") return payload;
+    if (payload.message) return payload.message;
+    if (Array.isArray(payload.errors) && payload.errors.length) {
+      return payload.errors.map((item) => (typeof item === "string" ? item : item.message)).join(", ");
+    }
+    try {
+      return JSON.stringify(payload);
+    } catch {
+      return fallback;
+    }
+  };
 
   useEffect(() => {
-    const current = allowedModulesByRole[moduleRole] || [];
-    if (moduleRole === "Admin" && !current.includes("admin")) {
-      setSelectedModules([...current, "admin"]);
-    } else {
-      setSelectedModules(current);
-    }
+    const baseList = allowedModulesByRole[moduleRole] || [];
+    const expanded = moduleRole === "Admin" && !baseList.includes("admin") ? [...baseList, "admin"] : baseList;
+    const normalized = Array.from(new Set(expanded)).sort();
+
+    setSelectedModules((prev) => {
+      if (
+        prev.length === normalized.length &&
+        prev.every((value, index) => value === normalized[index])
+      ) {
+        return prev;
+      }
+      return normalized;
+    });
   }, [allowedModulesByRole, moduleRole]);
 
   const loadUsers = useCallback(async () => {
@@ -703,6 +724,21 @@ export default function AdminPanel({
       })),
     [moduleOptions]
   );
+
+  const formattedResultText = useMemo(() => {
+    if (!result || !result.text) return "";
+    if (typeof result.text === "string") return result.text;
+    if (typeof result.text === "object") {
+      if (result.text.title) return result.text.title;
+      if (result.text.message) return result.text.message;
+      if (result.text.detail) return result.text.detail;
+      if (Array.isArray(result.text.errors)) {
+        return result.text.errors.map((item) => (typeof item === "string" ? item : item.message)).join(", ");
+      }
+      return JSON.stringify(result.text);
+    }
+    return String(result.text);
+  }, [result.text]);
 
   const handleToggleModule = (moduleId) => {
     setSelectedModules((current) =>
@@ -835,13 +871,13 @@ export default function AdminPanel({
         </div>
 
         {/* ALERTS */}
-        {result.text && (
+        {formattedResultText && (
           <div className={`alert erp-alert d-flex justify-content-between align-items-center py-2 mb-4`} style={{
             backgroundColor: result.type === 'success' ? '#f0fdf4' : '#fef2f2',
             color: result.type === 'success' ? '#166534' : '#991b1b',
             border: `1px solid ${result.type === 'success' ? '#bbf7d0' : '#fecaca'}`
           }}>
-            <span className="fw-semibold">{result.text}</span>
+            <span className="fw-semibold">{formattedResultText}</span>
             <button className="btn-close btn-sm" onClick={() => setResult({ text: "", type: "" })}></button>
           </div>
         )}
@@ -1450,3 +1486,7 @@ function WorkerMonitor() {
     </div>
   );
 }
+
+
+
+
