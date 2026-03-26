@@ -657,8 +657,11 @@ export default function AdminPanel({
     email: "",
     password: "",
     role: "OperationsWorker",
+    userType: "WORKER",
     mfaEnabled: false,
     name: "",
+    tenantName: "",
+    assignedPages: [],
     smtpHost: "",
     smtpPort: "",
     smtpEmail: "",
@@ -716,13 +719,52 @@ export default function AdminPanel({
     loadUsers();
   }, [loadUsers]);
 
+  useEffect(() => {
+    if (editingUser) return;
+
+    const basePages = allowedModulesByRole[form.role] || [];
+    const normalizedPages = form.userType === "ADMIN"
+      ? Array.from(new Set([...basePages, "admin"]))
+      : basePages.filter((page) => page !== "admin");
+
+    setForm((current) => {
+      const currentSorted = [...current.assignedPages].sort();
+      const nextSorted = [...normalizedPages].sort();
+      if (
+        currentSorted.length === nextSorted.length &&
+        currentSorted.every((value, index) => value === nextSorted[index])
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        assignedPages: normalizedPages
+      };
+    });
+  }, [allowedModulesByRole, editingUser, form.role, form.userType]);
+
   const modulePlaceholders = useMemo(
     () =>
-      moduleOptions.map((option) => ({
-        id: option.id,
-        label: typeof option.label === "function" ? option.label({ unreadCount: 0 }) : option.label
-      })),
+      moduleOptions.flatMap((option) => {
+        if (option.isGroup) {
+          return option.subModules.map((subModule) => ({
+            id: subModule.id,
+            label: typeof subModule.label === "function" ? subModule.label({ unreadCount: 0 }) : subModule.label
+          }));
+        }
+
+        return [{
+          id: option.id,
+          label: typeof option.label === "function" ? option.label({ unreadCount: 0 }) : option.label
+        }];
+      }),
     [moduleOptions]
+  );
+
+  const availableUserPages = useMemo(
+    () => modulePlaceholders.filter((module) => form.userType === "ADMIN" || module.id !== "admin"),
+    [form.userType, modulePlaceholders]
   );
 
   const formattedResultText = useMemo(() => {
@@ -738,12 +780,49 @@ export default function AdminPanel({
       return JSON.stringify(result.text);
     }
     return String(result.text);
-  }, [result.text]);
+  }, [result]);
 
   const handleToggleModule = (moduleId) => {
     setSelectedModules((current) =>
       current.includes(moduleId) ? current.filter((item) => item !== moduleId) : [...current, moduleId]
     );
+  };
+
+  const handleToggleAssignedPage = (pageId) => {
+    setForm((current) => {
+      const exists = current.assignedPages.includes(pageId);
+      const nextPages = exists
+        ? current.assignedPages.filter((item) => item !== pageId)
+        : [...current.assignedPages, pageId];
+
+      return {
+        ...current,
+        assignedPages: current.userType === "ADMIN" ? Array.from(new Set([...nextPages, "admin"])) : nextPages
+      };
+    });
+  };
+
+  const buildUserPayload = () => {
+    const normalizedSmtpPort =
+      form.smtpPort === "" || form.smtpPort === null || typeof form.smtpPort === "undefined"
+        ? null
+        : Number(form.smtpPort);
+
+    return {
+      username: form.username.trim(),
+      email: form.email.trim(),
+      password: form.password,
+      role: form.role,
+      userType: form.userType,
+      mfaEnabled: Boolean(form.mfaEnabled),
+      name: form.name.trim(),
+      tenantName: form.userType === "CLIENT" ? form.tenantName.trim() : null,
+      assignedPages: Array.isArray(form.assignedPages) ? form.assignedPages : [],
+      smtpHost: form.smtpHost.trim() || null,
+      smtpPort: Number.isNaN(normalizedSmtpPort) ? null : normalizedSmtpPort,
+      smtpEmail: form.smtpEmail.trim() || null,
+      smtpPassword: form.smtpPassword || null
+    };
   };
 
   const handleSaveModuleAccess = (event) => {
@@ -763,14 +842,33 @@ export default function AdminPanel({
   const handleUserSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
+    const payload = buildUserPayload();
 
     try {
       if (editingUser) {
-        await smartErpApi.updateUser(editingUser.id, form);
+        await smartErpApi.updateUser(editingUser.id, {
+          email: payload.email,
+          role: payload.role,
+          name: payload.name,
+          status: editingUser.status || "Active",
+          smtpHost: payload.smtpHost,
+          smtpPort: payload.smtpPort,
+          smtpEmail: payload.smtpEmail,
+          smtpPassword: payload.smtpPassword
+        });
+        await smartErpApi.updateUserPermissions({
+          userId: editingUser.id,
+          role: payload.role,
+          userType: payload.userType,
+          isActive: (editingUser.status || "Active") === "Active",
+          name: payload.name,
+          email: payload.email,
+          assignedPages: payload.assignedPages
+        });
         setResult({ text: `✓ User updated: ${form.username}`, type: "success" });
       } else {
-        const res = await smartErpApi.registerUser(form);
-        setResult({ text: `✓ User created: ${res.data.username} (${res.data.role})`, type: "success" });
+        const res = await smartErpApi.registerUser(payload);
+        setResult({ text: `✓ User created: ${res.data.username} (${res.data.userType})`, type: "success" });
       }
 
       resetForm();
@@ -778,7 +876,7 @@ export default function AdminPanel({
 
     } catch (err) {
       setResult({
-        text: err?.response?.data || "⚠ User operation failed",
+        text: formatApiError(err, "User operation failed"),
         type: "danger"
       });
     }
@@ -793,8 +891,11 @@ export default function AdminPanel({
       email: user.email || "",
       password: "", // Don't populate password for security
       role: user.role || "OperationsWorker",
+      userType: user.userType || (user.role === "Admin" ? "ADMIN" : "WORKER"),
       mfaEnabled: user.mfaEnabled || false,
       name: user.name || "",
+      tenantName: user.tenantName || "",
+      assignedPages: user.assignedPages || [],
       smtpHost: user.smtpHost || "",
       smtpPort: user.smtpPort || "",
       smtpEmail: user.smtpEmail || "",
@@ -810,7 +911,7 @@ export default function AdminPanel({
       setResult({ text: "✓ User deleted successfully", type: "success" });
       loadUsers();
     } catch (err) {
-      setResult({ text: "⚠ Failed to delete user", type: "danger" });
+      setResult({ text: formatApiError(err, "Failed to delete user"), type: "danger" });
     }
   };
 
@@ -820,7 +921,7 @@ export default function AdminPanel({
       setResult({ text: "✓ User blocked successfully", type: "success" });
       loadUsers();
     } catch (err) {
-      setResult({ text: "⚠ Failed to block user", type: "danger" });
+      setResult({ text: formatApiError(err, "Failed to block user"), type: "danger" });
     }
   };
 
@@ -830,7 +931,7 @@ export default function AdminPanel({
       setResult({ text: "✓ User unblocked successfully", type: "success" });
       loadUsers();
     } catch (err) {
-      setResult({ text: "⚠ Failed to unblock user", type: "danger" });
+      setResult({ text: formatApiError(err, "Failed to unblock user"), type: "danger" });
     }
   };
 
@@ -841,8 +942,11 @@ export default function AdminPanel({
       email: "",
       password: "",
       role: "OperationsWorker",
+      userType: "WORKER",
       mfaEnabled: false,
       name: "",
+      tenantName: "",
+      assignedPages: [],
       smtpHost: "",
       smtpPort: "",
       smtpEmail: "",
@@ -852,9 +956,27 @@ export default function AdminPanel({
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
-    setForm({
-      ...form,
-      [name]: type === "checkbox" ? checked : value
+    setForm((current) => {
+      const nextValue = type === "checkbox" ? checked : value;
+      const nextForm = {
+        ...current,
+        [name]: nextValue
+      };
+
+      if (name === "role" && value === "Admin") {
+        nextForm.userType = "ADMIN";
+        nextForm.assignedPages = Array.from(new Set([...current.assignedPages, "admin"]));
+      }
+
+      if (name === "userType" && value !== "ADMIN") {
+        nextForm.assignedPages = current.assignedPages.filter((page) => page !== "admin");
+      }
+
+      if (name === "userType" && value === "CLIENT" && !current.tenantName) {
+        nextForm.tenantName = current.name || current.username;
+      }
+
+      return nextForm;
     });
   };
 
@@ -917,12 +1039,47 @@ export default function AdminPanel({
                       <option>User</option>
                     </select>
                   </div>
+                  <div className="col-md-4">
+                    <label className="erp-label">User Type <span className="text-danger">*</span></label>
+                    <select name="userType" className="form-select erp-input" value={form.userType} onChange={handleChange}>
+                      <option value="ADMIN">ADMIN</option>
+                      <option value="WORKER">WORKER</option>
+                      <option value="CLIENT">CLIENT</option>
+                    </select>
+                  </div>
                   {!editingUser && (
                     <div className="col-md-4">
                       <label className="erp-label">Initial Password <span className="text-danger">*</span></label>
                       <input type="password" name="password" autoComplete="new-password" className="form-control erp-input" value={form.password} onChange={handleChange} required={!editingUser} />
                     </div>
                   )}
+
+                  {form.userType === "CLIENT" && (
+                    <div className="col-md-4">
+                      <label className="erp-label">Tenant Name <span className="text-danger">*</span></label>
+                      <input name="tenantName" className="form-control erp-input" value={form.tenantName} onChange={handleChange} placeholder="Client ERP name" required={form.userType === "CLIENT"} />
+                    </div>
+                  )}
+
+                  <div className="col-12 mt-4">
+                    <h6 className="erp-section-title">Assigned Page Access</h6>
+                    <div className="bg-light p-3 border rounded">
+                      <div className="row row-cols-1 row-cols-md-2 g-2">
+                        {availableUserPages.map((page) => (
+                          <label key={page.id} className="form-check d-flex align-items-center m-0">
+                            <input
+                              className="form-check-input me-2"
+                              type="checkbox"
+                              checked={form.assignedPages.includes(page.id)}
+                              onChange={() => handleToggleAssignedPage(page.id)}
+                              disabled={form.userType !== "ADMIN" && page.id === "admin"}
+                            />
+                            <span className="form-check-label small fw-semibold text-dark">{page.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
 
                   <div className="col-12 mt-4">
                     <h6 className="erp-section-title">SMTP Configuration (Optional)</h6>
@@ -1026,6 +1183,7 @@ export default function AdminPanel({
                   <th>Full Name</th>
                   <th>Email</th>
                   <th>Role</th>
+                  <th>User Type</th>
                   <th className="text-center">Status</th>
                   <th>Created</th>
                   <th>Last Login</th>
@@ -1039,6 +1197,7 @@ export default function AdminPanel({
                     <td>{user.name || '---'}</td>
                     <td className="text-muted">{user.email || '---'}</td>
                     <td><span className="erp-status-tag tag-info">{user.role || 'OperationsWorker'}</span></td>
+                    <td><span className="erp-status-tag tag-warning">{user.userType || 'WORKER'}</span></td>
                     <td className="text-center">
                       <span className={`erp-status-tag ${user.status === 'Active' ? 'tag-success' : 'tag-danger'}`}>
                         {user.status || 'Active'}

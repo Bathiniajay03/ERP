@@ -13,13 +13,19 @@ export const smartErpApi = {
     api.post("/smart-erp/auth/verify-mfa", payload),
 
   registerUser: (payload) =>
-    api.post("/smart-erp/auth/register", payload),
+    api.post("/admin/create-user", payload),
 
   logout: (payload) =>
     api.post("/smart-erp/auth/logout", payload),
 
   getUsers: () =>
-    api.get("/smart-erp/auth/users"),
+    api.get("/admin/users"),
+
+  getCurrentAccess: () =>
+    api.get("/admin/me/access"),
+
+  updateUserPermissions: (payload) =>
+    api.post("/admin/update-permissions", payload),
 
   updateUser: (id, payload) =>
     api.put(`/users/${id}`, payload),

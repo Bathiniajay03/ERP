@@ -1094,8 +1094,93 @@ const MODULE_CONFIG = [
 ];
 
 const DEFAULT_ROLE_MODULES = {
-  Admin: MODULE_CONFIG.flatMap(m => m.isGroup ? [m.id, ...m.subModules.map(s => s.id)] : [m.id]),
-  User: ["dashboard", "notifications"]
+  Admin: MODULE_CONFIG.flatMap((module) => module.isGroup ? module.subModules.map((subModule) => subModule.id) : [module.id]),
+  Manager: [
+    "dashboard",
+    "products",
+    "salesOrderList",
+    "createSalesOrder",
+    "customers",
+    "vendors",
+    "purchaseOrders",
+    "vendorReturns",
+    "inventory",
+    "lots",
+    "warehouses",
+    "operations",
+    "finance",
+    "reports",
+    "stockAlerts",
+    "scannerDevice",
+    "serialScan",
+    "automation",
+    "notifications"
+  ],
+  Operator: [
+    "operations",
+    "scannerDevice",
+    "serialScan"
+  ],
+  OperationsWorker: [
+    "dashboard",
+    "products",
+    "inventory",
+    "operations",
+    "salesOrderList",
+    "createSalesOrder",
+    "customers",
+    "vendors",
+    "purchaseOrders",
+    "vendorReturns",
+    "stockAlerts",
+    "notifications",
+    "scannerDevice",
+    "serialScan"
+  ],
+  ScannerWorker: [
+    "scannerDevice",
+    "serialScan",
+    "operations"
+  ],
+  "Warehouse Manager": [
+    "dashboard",
+    "products",
+    "inventory",
+    "lots",
+    "warehouses",
+    "operations",
+    "purchaseOrders",
+    "vendors",
+    "vendorReturns",
+    "stockAlerts",
+    "notifications",
+    "scannerDevice",
+    "serialScan"
+  ],
+  "Finance Manager": [
+    "dashboard",
+    "finance",
+    "reports",
+    "salesOrderList",
+    "purchaseOrders",
+    "customers",
+    "vendors",
+    "vendorReturns",
+    "stockAlerts",
+    "notifications"
+  ],
+  "Robot Supervisor": [
+    "dashboard",
+    "operations",
+    "automation",
+    "localAI",
+    "notifications",
+    "scannerDevice"
+  ],
+  User: [
+    "dashboard",
+    "notifications"
+  ]
 };
 
 export default function App() {
@@ -1194,8 +1279,8 @@ function AppContent() {
   const isClient = typeof window !== "undefined";
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [role, setRole] = useState("");
+  const [userAssignedPages, setUserAssignedPages] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const location = useLocation();
 
   const normalizeRoleModules = useCallback((modules) => {
     const normalized = { ...modules };
@@ -1237,21 +1322,31 @@ function AppContent() {
     if (token) {
       setIsAuthenticated(true);
       setRole(window.localStorage.getItem("erp_role") || "Admin");
+      try {
+        setUserAssignedPages(JSON.parse(window.localStorage.getItem("erp_assigned_pages") || "[]"));
+      } catch {
+        setUserAssignedPages([]);
+      }
     }
   }, []);
 
-  const handleLoginSuccess = useCallback(({ accessToken, role, loginLogId }) => {
+  const handleLoginSuccess = useCallback(({ accessToken, role, loginLogId, userType, assignedPages }) => {
     if (accessToken) {
       window.localStorage.setItem("erp_token", accessToken);
     }
     if (role) {
       window.localStorage.setItem("erp_role", role);
     }
+    if (userType) {
+      window.localStorage.setItem("erp_user_type", userType);
+    }
     if (loginLogId) {
       window.localStorage.setItem("erp_login_log_id", loginLogId.toString());
     }
+    window.localStorage.setItem("erp_assigned_pages", JSON.stringify(assignedPages || []));
     setIsAuthenticated(true);
     setRole(role || "Admin");
+    setUserAssignedPages(Array.isArray(assignedPages) ? assignedPages : []);
   }, []);
 
   const handleLogout = useCallback(async () => {
@@ -1265,9 +1360,12 @@ function AppContent() {
     }
     window.localStorage.removeItem("erp_token");
     window.localStorage.removeItem("erp_role");
+    window.localStorage.removeItem("erp_user_type");
+    window.localStorage.removeItem("erp_assigned_pages");
     window.localStorage.removeItem("erp_login_log_id");
     setIsAuthenticated(false);
     setRole("");
+    setUserAssignedPages([]);
   }, []);
 
   useEffect(() => {
@@ -1276,10 +1374,59 @@ function AppContent() {
     return () => window.removeEventListener("erp:unauthorized", handleUnauthorized);
   }, [handleLogout]);
 
+  const refreshCurrentAccess = useCallback(async () => {
+    if (!window.localStorage.getItem("erp_token")) return;
+
+    try {
+      const res = await smartErpApi.getCurrentAccess();
+      const access = res.data || {};
+      const nextPages = Array.isArray(access.assignedPages) ? access.assignedPages : [];
+
+      if (access.role) {
+        setRole(access.role);
+        window.localStorage.setItem("erp_role", access.role);
+      }
+
+      if (access.userType) {
+        window.localStorage.setItem("erp_user_type", access.userType);
+      }
+
+      setUserAssignedPages(nextPages);
+      window.localStorage.setItem("erp_assigned_pages", JSON.stringify(nextPages));
+    } catch (error) {
+      if (error?.response?.status === 401 || error?.response?.status === 403) {
+        handleLogout();
+      }
+    }
+  }, [handleLogout]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    refreshCurrentAccess();
+    const intervalId = window.setInterval(refreshCurrentAccess, 15000);
+    return () => window.clearInterval(intervalId);
+  }, [isAuthenticated, refreshCurrentAccess]);
+
   const allowedIds = useMemo(
-    () => allowedModulesByRole[role] || DEFAULT_ROLE_MODULES.Admin,
-    [role, allowedModulesByRole]
+    () => {
+      if (userAssignedPages.length) {
+        return userAssignedPages;
+      }
+      return allowedModulesByRole[role] || DEFAULT_ROLE_MODULES.Admin;
+    },
+    [userAssignedPages, role, allowedModulesByRole]
   );
+
+  const flatModules = useMemo(
+    () => MODULE_CONFIG.flatMap((item) => item.isGroup ? item.subModules : [item]),
+    []
+  );
+
+  const fallbackPath = useMemo(() => {
+    const firstAllowed = flatModules.find((item) => allowedIds.includes(item.id));
+    return firstAllowed?.path || "/dashboard";
+  }, [allowedIds, flatModules]);
 
   const navItems = useMemo(() => {
     return MODULE_CONFIG.filter(item => {
@@ -1292,6 +1439,11 @@ function AppContent() {
       return item;
     });
   }, [allowedIds]);
+
+  const renderProtectedRoute = useCallback(
+    (moduleId, element) => allowedIds.includes(moduleId) ? element : <AccessDenied moduleId={moduleId} />,
+    [allowedIds]
+  );
 
   if (!isAuthenticated) {
     return <LoginPage onLoginSuccess={handleLoginSuccess} />;
@@ -1317,36 +1469,36 @@ function AppContent() {
         </header>
 
         <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/products" element={<Products />} />
+          <Route path="/" element={<Navigate to={fallbackPath} replace />} />
+          <Route path="/dashboard" element={renderProtectedRoute("dashboard", <Dashboard />)} />
+          <Route path="/products" element={renderProtectedRoute("products", <Products />)} />
 
-          <Route path="/sales-orders/list" element={<SalesOrderList />} />
-          <Route path="/sales-orders/create" element={<CreateSalesOrder />} />
-          <Route path="/customers" element={<Customers />} />
+          <Route path="/sales-orders/list" element={renderProtectedRoute("salesOrderList", <SalesOrderList />)} />
+          <Route path="/sales-orders/create" element={renderProtectedRoute("createSalesOrder", <CreateSalesOrder />)} />
+          <Route path="/customers" element={renderProtectedRoute("customers", <Customers />)} />
 
-          <Route path="/vendors" element={<Vendors />} />
-          <Route path="/purchase-orders" element={<PurchaseOrders />} />
-          <Route path="/vendor-returns" element={<VendorReturns />} />
+          <Route path="/vendors" element={renderProtectedRoute("vendors", <Vendors />)} />
+          <Route path="/purchase-orders" element={renderProtectedRoute("purchaseOrders", <PurchaseOrders />)} />
+          <Route path="/vendor-returns" element={renderProtectedRoute("vendorReturns", <VendorReturns />)} />
 
-          <Route path="/inventory" element={<Inventory />} />
-          <Route path="/lots" element={<Lots />} />
-          <Route path="/warehouses" element={<Warehouses />} />
-          <Route path="/operations" element={<Operations />} />
+          <Route path="/inventory" element={renderProtectedRoute("inventory", <Inventory />)} />
+          <Route path="/lots" element={renderProtectedRoute("lots", <Lots />)} />
+          <Route path="/warehouses" element={renderProtectedRoute("warehouses", <Warehouses />)} />
+          <Route path="/operations" element={renderProtectedRoute("operations", <Operations />)} />
 
-          <Route path="/finance" element={<Finance />} />
-          <Route path="/reports" element={<Reports />} />
-          <Route path="/stock-alerts" element={<StockAlerts />} />
+          <Route path="/finance" element={renderProtectedRoute("finance", <Finance />)} />
+          <Route path="/reports" element={renderProtectedRoute("reports", <Reports />)} />
+          <Route path="/stock-alerts" element={renderProtectedRoute("stockAlerts", <StockAlerts />)} />
 
-          <Route path="/scanner-device" element={<ScannerDevicePage />} />
-          <Route path="/serial-scan" element={<SerialScanPage />} />
-          <Route path="/automation" element={<Automation />} />
-          <Route path="/local-ai" element={<LocalAIPage />} />
-          <Route path="/notifications" element={<Notifications />} />
+          <Route path="/scanner-device" element={renderProtectedRoute("scannerDevice", <ScannerDevicePage />)} />
+          <Route path="/serial-scan" element={renderProtectedRoute("serialScan", <SerialScanPage />)} />
+          <Route path="/automation" element={renderProtectedRoute("automation", <Automation />)} />
+          <Route path="/local-ai" element={renderProtectedRoute("localAI", <LocalAIPage />)} />
+          <Route path="/notifications" element={renderProtectedRoute("notifications", <Notifications />)} />
           <Route
             path="/admin"
             element={
-              role === "Admin" ? (
+              role === "Admin" && allowedIds.includes("admin") ? (
                 <AdminPanel
                   allowedModulesByRole={allowedModulesByRole}
                   moduleOptions={MODULE_CONFIG}
@@ -1358,6 +1510,21 @@ function AppContent() {
             }
           />
         </Routes>
+      </div>
+    </div>
+  );
+}
+
+function AccessDenied({ moduleId }) {
+  return (
+    <div className="container py-5">
+      <div className="card shadow-sm border-0 mx-auto" style={{ maxWidth: 520 }}>
+        <div className="card-body p-4 text-center">
+          <h3 className="fw-bold mb-2">Access Denied</h3>
+          <p className="text-muted mb-0">
+            You do not currently have permission to open `{moduleId}`. Please contact your admin.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -1446,7 +1613,9 @@ function LoginPage({ onLoginSuccess }) {
         onLoginSuccess({
           accessToken: res.data.accessToken,
           role: res.data.role,
-          loginLogId: res.data.loginLogId
+          loginLogId: res.data.loginLogId,
+          userType: res.data.userType,
+          assignedPages: res.data.assignedPages
         });
       }
     } catch (err) {
@@ -1467,7 +1636,9 @@ function LoginPage({ onLoginSuccess }) {
       onLoginSuccess({
         accessToken: res.data.accessToken,
         role: res.data.role,
-        loginLogId: res.data.loginLogId
+        loginLogId: res.data.loginLogId,
+        userType: res.data.userType,
+        assignedPages: res.data.assignedPages
       });
     } catch (err) {
       const message = err?.response?.data?.message || err?.response?.data || err.message || "MFA verification failed";
