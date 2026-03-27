@@ -2,6 +2,15 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { smartErpApi } from '../services/smartErpApi';
 // import DocumentAttachments from '../components/DocumentAttachments';
 
+const formatPurchaseOrderError = (error, fallback) => {
+  const payload = error?.response?.data;
+  if (typeof payload === 'string' && payload.trim()) return payload;
+  if (payload?.message) return payload.message;
+  if (payload?.title) return payload.title;
+  if (payload?.detail) return payload.detail;
+  return fallback;
+};
+
 export default function PurchaseOrders() {
   const [items, setItems] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
@@ -29,7 +38,8 @@ export default function PurchaseOrders() {
     purchaseOrderLineId: '',
     quantity: 0,
     lotNumber: '',
-    scannerDeviceId: 'PO-SCN-01'
+    scannerDeviceId: 'PO-SCN-01',
+    generateSerials: false
   });
 
   const loadData = async () => {
@@ -74,7 +84,7 @@ export default function PurchaseOrders() {
 
       setPurchaseOrders(normalizedPos);
     } catch (err) {
-      setMessage(err?.response?.data || 'Failed to load purchase-order data.');
+      setMessage(formatPurchaseOrderError(err, 'Failed to load purchase-order data.'));
     } finally {
       setLoading(false);
     }
@@ -105,6 +115,41 @@ export default function PurchaseOrders() {
     () => (selectedReceivePo?.lines || []).filter((line) => Number(line.pendingQuantity) > 0),
     [selectedReceivePo]
   );
+
+  const selectedReceiveLine = useMemo(
+    () => pendingLines.find((line) => Number(line.lineId) === Number(receiveForm.purchaseOrderLineId)) || null,
+    [pendingLines, receiveForm.purchaseOrderLineId]
+  );
+
+  const selectedReceiveItem = useMemo(
+    () => items.find((item) => Number(item.id) === Number(selectedReceiveLine?.itemId)) || null,
+    [items, selectedReceiveLine]
+  );
+
+  const receiveIsAiPo = Boolean(selectedReceiveLine?.isAiGenerated || selectedReceivePo?.isAiGenerated);
+  const receiveSuggestedLot = selectedReceiveLine?.suggestedLotNumber || '';
+
+  const serialPreview = useMemo(() => {
+    if (!receiveForm.generateSerials || !selectedReceiveItem) return [];
+
+    const quantity = Math.max(0, Math.min(5, Math.floor(Number(receiveForm.quantity) || Number(selectedReceiveLine?.pendingQuantity) || 0)));
+    if (!quantity) return [];
+
+    const prefixSource = selectedReceiveItem.serialPrefix || selectedReceiveItem.itemCode || 'SER';
+    const normalizedPrefix = String(prefixSource).trim().toUpperCase().replace(/[^A-Z0-9-]/g, '') || 'SER';
+    return Array.from({ length: quantity }, (_, index) => `${normalizedPrefix}-NEXT${index + 1}`);
+  }, [receiveForm.generateSerials, receiveForm.quantity, selectedReceiveItem, selectedReceiveLine]);
+
+  useEffect(() => {
+    if (!selectedReceiveLine) return;
+
+    setReceiveForm((prev) => ({
+      ...prev,
+      quantity: prev.quantity > 0 ? prev.quantity : Number(selectedReceiveLine.pendingQuantity || 0),
+      lotNumber: receiveIsAiPo ? receiveSuggestedLot : prev.lotNumber,
+      generateSerials: selectedReceiveItem?.serialPrefix ? true : prev.generateSerials
+    }));
+  }, [receiveIsAiPo, receiveSuggestedLot, selectedReceiveItem, selectedReceiveLine]);
 
   const addPoLine = () => {
     setPoForm((prev) => ({
@@ -168,7 +213,7 @@ export default function PurchaseOrders() {
       setMessage(`✓ Purchase Order created: ${res?.data?.poNumber || ''}`);
       await loadData();
     } catch (err) {
-      setMessage(err?.response?.data || '⚠ PO creation failed.');
+      setMessage(formatPurchaseOrderError(err, '⚠ PO creation failed.'));
     } finally {
       setLoading(false);
     }
@@ -198,7 +243,7 @@ export default function PurchaseOrders() {
       setMessage(`✓ Vendor created: ${res.data.vendorCode} - ${res.data.name}`);
       await loadData();
     } catch (err) {
-      setMessage(err?.response?.data || '⚠ Vendor creation failed.');
+      setMessage(formatPurchaseOrderError(err, '⚠ Vendor creation failed.'));
     } finally {
       setLoading(false);
     }
@@ -219,20 +264,24 @@ export default function PurchaseOrders() {
         purchaseOrderLineId: Number(receiveForm.purchaseOrderLineId),
         quantity: Number(receiveForm.quantity),
         lotNumber: receiveForm.lotNumber || null,
-        scannerDeviceId: receiveForm.scannerDeviceId
+        scannerDeviceId: receiveForm.scannerDeviceId,
+        generateSerials: receiveForm.generateSerials
       });
 
-      setMessage(`✓ ${res?.data?.message || 'Received'} (${res?.data?.poNumber || ''})`);
+      const generatedSerialCount = Number(res?.data?.generatedSerialCount || 0);
+      const serialMessage = generatedSerialCount > 0 ? ` | Serials: ${generatedSerialCount}` : '';
+      setMessage(`✓ ${res?.data?.message || 'Received'} (${res?.data?.poNumber || ''})${serialMessage}`);
       setReceiveForm({
         poId: '',
         purchaseOrderLineId: '',
         quantity: 0,
         lotNumber: '',
-        scannerDeviceId: 'PO-SCN-01'
+        scannerDeviceId: 'PO-SCN-01',
+        generateSerials: false
       });
       await loadData();
     } catch (err) {
-      setMessage(err?.response?.data || '⚠ PO receiving failed.');
+      setMessage(formatPurchaseOrderError(err, '⚠ PO receiving failed.'));
     } finally {
       setLoading(false);
     }
@@ -424,13 +473,54 @@ export default function PurchaseOrders() {
                       <small className="text-muted" style={{fontSize: '0.65rem'}}>Leave 0 to receive all pending.</small>
                     </div>
                     <div className="col-md-6">
-                      <label className="erp-label">Assign Lot / Batch #</label>
-                      <input className="form-control erp-input font-monospace" placeholder="Scan or Type" value={receiveForm.lotNumber} onChange={(e) => setReceiveForm((prev) => ({ ...prev, lotNumber: e.target.value }))} />
+                      <label className="erp-label">{receiveIsAiPo ? 'Auto Lot / Batch #' : 'Assign Lot / Batch #'}</label>
+                      <input
+                        className="form-control erp-input font-monospace"
+                        placeholder={receiveIsAiPo ? 'Resolved automatically from existing lot' : 'Scan or Type'}
+                        value={receiveForm.lotNumber}
+                        onChange={(e) => setReceiveForm((prev) => ({ ...prev, lotNumber: e.target.value }))}
+                        readOnly={receiveIsAiPo}
+                      />
+                      <small className="text-muted" style={{ fontSize: '0.65rem' }}>
+                        {receiveIsAiPo
+                          ? 'AI purchase orders reuse the latest existing lot for this item and warehouse.'
+                          : 'Manual purchase orders allow direct lot entry.'}
+                      </small>
                     </div>
                     <div className="col-md-12 mt-2">
                       <label className="erp-label">Scanner Device ID</label>
                       <input className="form-control erp-input font-monospace text-muted" value={receiveForm.scannerDeviceId} onChange={(e) => setReceiveForm((prev) => ({ ...prev, scannerDeviceId: e.target.value }))} />
                     </div>
+                    <div className="col-md-12 mt-2">
+                      <div className="form-check">
+                        <input
+                          id="generatePoSerials"
+                          className="form-check-input"
+                          type="checkbox"
+                          checked={receiveForm.generateSerials}
+                          onChange={(e) => setReceiveForm((prev) => ({ ...prev, generateSerials: e.target.checked }))}
+                        />
+                        <label className="form-check-label erp-label m-0 text-none" htmlFor="generatePoSerials">
+                          Generate Serials During Receipt
+                        </label>
+                      </div>
+                      <small className="text-muted" style={{ fontSize: '0.65rem' }}>
+                        Uses the item serial prefix when available and links generated serials to the PO, lot, and warehouse.
+                      </small>
+                    </div>
+                    {receiveForm.generateSerials && selectedReceiveItem && (
+                      <div className="col-md-12 mt-2">
+                        <div className="border rounded bg-white p-2">
+                          <div className="small fw-bold text-muted mb-1">Serial Preview Pattern</div>
+                          <div className="font-monospace small">
+                            {serialPreview.length ? serialPreview.join(', ') : `${(selectedReceiveItem.serialPrefix || selectedReceiveItem.itemCode || 'SER').toUpperCase()}-NEXT#`}
+                          </div>
+                          <small className="text-muted d-block mt-1">
+                            Preview only. Final sequence is generated from the current DB serial counter.
+                          </small>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <button type="submit" className="btn btn-success erp-btn w-100 fw-bold py-2" disabled={loading || !receiveForm.poId}>

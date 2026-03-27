@@ -998,7 +998,7 @@
 
 
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "bootstrap/dist/css/bootstrap.min.css";
 import { BrowserRouter as Router, Routes, Route, Link, Navigate, useLocation } from "react-router-dom";
 
@@ -1277,10 +1277,15 @@ export default function App() {
 
 function AppContent() {
   const isClient = typeof window !== "undefined";
+  const warningTimeoutMs = 2 * 60 * 1000;
+  const logoutTimeoutMs = 5 * 60 * 1000;
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [role, setRole] = useState("");
   const [userAssignedPages, setUserAssignedPages] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sessionWarningOpen, setSessionWarningOpen] = useState(false);
+  const warningTimerRef = useRef(null);
+  const logoutTimerRef = useRef(null);
 
   const normalizeRoleModules = useCallback((modules) => {
     const normalized = { ...modules };
@@ -1366,13 +1371,59 @@ function AppContent() {
     setIsAuthenticated(false);
     setRole("");
     setUserAssignedPages([]);
+    setSessionWarningOpen(false);
   }, []);
+
+  const clearSessionTimers = useCallback(() => {
+    if (warningTimerRef.current) {
+      window.clearTimeout(warningTimerRef.current);
+      warningTimerRef.current = null;
+    }
+    if (logoutTimerRef.current) {
+      window.clearTimeout(logoutTimerRef.current);
+      logoutTimerRef.current = null;
+    }
+  }, []);
+
+  const resetSessionTimers = useCallback(() => {
+    if (!isAuthenticated) return;
+
+    clearSessionTimers();
+    setSessionWarningOpen(false);
+
+    warningTimerRef.current = window.setTimeout(() => {
+      setSessionWarningOpen(true);
+    }, warningTimeoutMs);
+
+    logoutTimerRef.current = window.setTimeout(() => {
+      setSessionWarningOpen(false);
+      handleLogout();
+    }, logoutTimeoutMs);
+  }, [clearSessionTimers, handleLogout, isAuthenticated, logoutTimeoutMs, warningTimeoutMs]);
 
   useEffect(() => {
     const handleUnauthorized = () => handleLogout();
     window.addEventListener("erp:unauthorized", handleUnauthorized);
     return () => window.removeEventListener("erp:unauthorized", handleUnauthorized);
   }, [handleLogout]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      clearSessionTimers();
+      return;
+    }
+
+    const activityEvents = ["mousemove", "mousedown", "keydown", "click", "scroll", "touchstart"];
+    const handleActivity = () => resetSessionTimers();
+
+    resetSessionTimers();
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, handleActivity, true));
+
+    return () => {
+      activityEvents.forEach((eventName) => window.removeEventListener(eventName, handleActivity, true));
+      clearSessionTimers();
+    };
+  }, [clearSessionTimers, isAuthenticated, resetSessionTimers]);
 
   const refreshCurrentAccess = useCallback(async () => {
     if (!window.localStorage.getItem("erp_token")) return;
@@ -1467,6 +1518,23 @@ function AppContent() {
           <span className="fw-bold">ERP PRO</span>
           <div style={{ width: '45px' }}></div>
         </header>
+
+        {sessionWarningOpen && (
+          <div className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style={{ backgroundColor: "rgba(15, 23, 42, 0.45)", zIndex: 1080 }}>
+            <div className="card shadow border-0" style={{ width: "100%", maxWidth: 420 }}>
+              <div className="card-body p-4">
+                <h5 className="fw-bold mb-2">Session Timeout Warning</h5>
+                <p className="text-muted mb-3">
+                  No activity detected for 2 minutes. You will be logged out automatically after 5 minutes of inactivity.
+                </p>
+                <div className="d-flex justify-content-end gap-2">
+                  <button className="btn btn-outline-secondary" onClick={handleLogout}>Logout Now</button>
+                  <button className="btn btn-primary" onClick={resetSessionTimers}>Stay Signed In</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <Routes>
           <Route path="/" element={<Navigate to={fallbackPath} replace />} />
