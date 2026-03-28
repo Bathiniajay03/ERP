@@ -1,3 +1,4 @@
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { smartErpApi } from "../services/smartErpApi";
 import JsBarcode from "jsbarcode";
@@ -46,19 +47,22 @@ export default function Lots() {
 
   // 1. Map raw inventory to rich rows
   const inventoryRows = useMemo(() => {
-    const itemsById = new Map(items.map((item) => [item.id, item]));
-    const warehousesById = new Map(warehouses.map((warehouse) => [warehouse.id, warehouse]));
+    const itemsById = new Map(items.map((item) => [String(item.id), item]));
+    const warehousesById = new Map(warehouses.map((warehouse) => [String(warehouse.id), warehouse]));
 
     return inventory.map((entry) => {
-      const resolvedItemId = entry.ItemId ?? entry.itemId;
-      const resolvedWarehouseId = entry.WarehouseId ?? entry.warehouseId;
+      const resolvedItemId = String(entry.ItemId ?? entry.itemId);
+      const resolvedWarehouseId = String(entry.WarehouseId ?? entry.warehouseId);
       const warehouse = warehousesById.get(resolvedWarehouseId);
       const item = itemsById.get(resolvedItemId);
+      
+      // FIX: Safely process lotNumber to prevent .trim() crashes on numeric PO lots
+      const rawLot = entry.lotNumber || entry.LotNumber || entry.lotId || "";
       const lotNumber =
-        (entry.lotNumber || entry.LotNumber || entry.lotId || "").trim() === "-" ||
-        !(entry.lotNumber || entry.LotNumber)
+        String(rawLot).trim() === "-" || !(entry.lotNumber || entry.LotNumber)
           ? "General Inventory"
-          : entry.lotNumber || entry.LotNumber;
+          : String(entry.lotNumber || entry.LotNumber);
+          
       const quantity = Number(entry.quantity || entry.Quantity || 0);
       const storageHint = warehouse?.name || item?.WarehouseLocation || "Main Storage";
 
@@ -68,9 +72,9 @@ export default function Lots() {
         itemId: resolvedItemId,
         warehouseId: resolvedWarehouseId,
         lotNumber,
-        itemCode: item?.itemCode || `Item-${entry.itemId || entry.ItemId}`,
-        itemName: item?.description || "Unknown product",
-        warehouseName: warehouse?.name || `WH-${entry.warehouseId || entry.WarehouseId}`,
+        itemCode: item?.itemCode || `Item-${resolvedItemId}`,
+        itemName: item?.description || item?.itemName || "Unknown product",
+        warehouseName: warehouse?.name || `WH-${resolvedWarehouseId}`,
         quantity,
         storage: storageHint,
         locationCode: entry.locationCode || entry.LocationCode || item?.WarehouseLocation || "N/A"
@@ -105,19 +109,19 @@ export default function Lots() {
     const normalized = filter.toLowerCase();
     
     return groupedProducts.filter((group) =>
-      group.itemCode.toLowerCase().includes(normalized) ||
-      group.itemName.toLowerCase().includes(normalized) ||
+      group.itemCode?.toLowerCase().includes(normalized) ||
+      group.itemName?.toLowerCase().includes(normalized) ||
       // Also search within the lots of this product
       group.lots.some(lot => 
-        lot.lotNumber.toLowerCase().includes(normalized) || 
-        lot.warehouseName.toLowerCase().includes(normalized)
+        lot.lotNumber?.toLowerCase().includes(normalized) || 
+        lot.warehouseName?.toLowerCase().includes(normalized)
       )
     );
   }, [filter, groupedProducts]);
 
   const summary = useMemo(() => {
     const uniqueLots = new Set(
-      inventoryRows.map((row) => (row.lotId != null ? `lot-${row.lotId}` : `general-${row.itemCode}-${row.warehouseName}`))
+      inventoryRows.map((row) => `${row.lotId || row.lotNumber || row.id}-${row.itemCode}-${row.warehouseId}`)
     );
     const totalQuantity = inventoryRows.reduce((sum, row) => sum + row.quantity, 0);
     return {
@@ -128,31 +132,34 @@ export default function Lots() {
   }, [inventoryRows, groupedProducts]);
 
   const loadLotSerials = useCallback(async (lot) => {
-    if (!selectedProduct?.itemId || !lot?.lotId || !lot?.warehouseId) return;
-    const lotId = lot.lotId;
+    // FIX: Enhanced identifier fallback ensures PO Lots display correctly even if they lack a lotId
+    const identifier = lot?.lotId || lot?.lotNumber || lot?.id;
+    if (!selectedProduct?.itemId || !identifier || !lot?.warehouseId) return;
+    
+    const lotKey = `${identifier}_${lot.warehouseId}`;
     setSerialsErrorLot('');
-    setSerialsLoadingLot(lotId);
+    setSerialsLoadingLot(lotKey);
     try {
       const response = await smartErpApi.stockSerials({
         itemId: selectedProduct.itemId,
         warehouseId: lot.warehouseId,
-        lotId,
+        lotId: lot.lotId,
         lotNumber: lot.lotNumber
       });
       const payload = Array.isArray(response.data) ? response.data : [];
       setLotSerials((prev) => ({
         ...prev,
-        [lotId]: payload.map((serial) => ({
+        [lotKey]: payload.map((serial) => ({
           ...serial,
           warehouseId: lot.warehouseId,
           warehouseName: lot.warehouseName,
           lotNumber: lot.lotNumber,
-          lotId
+          lotId: lot.lotId
         }))
       }));
     } catch (error) {
       console.error("Failed to load lot serials", error);
-      setLotSerials((prev) => ({ ...prev, [lotId]: [] }));
+      setLotSerials((prev) => ({ ...prev, [lotKey]: [] }));
       setSerialsErrorLot("Unable to load serial numbers for this lot.");
     } finally {
       setSerialsLoadingLot(null);
@@ -160,15 +167,18 @@ export default function Lots() {
   }, [selectedProduct]);
 
   const toggleLotSerials = useCallback((lot) => {
-    if (!lot.lotId || !lot.warehouseId) return;
+    const identifier = lot.lotId || lot.lotNumber || lot.id;
+    if (!identifier || !lot.warehouseId) return;
+    
+      const lotKey = `${identifier}_${lot.warehouseId}`;
 
-      if (openLotForSerials === lot.lotId) {
+      if (openLotForSerials === lotKey) {
         setOpenLotForSerials(null);
         return;
       }
 
-      setOpenLotForSerials(lot.lotId);
-      if (!lotSerials[lot.lotId]) {
+      setOpenLotForSerials(lotKey);
+      if (!lotSerials[lotKey]) {
         loadLotSerials(lot);
       }
   }, [lotSerials, loadLotSerials, openLotForSerials]);
@@ -249,10 +259,14 @@ export default function Lots() {
         reason: "Serial dispatched from lot view"
       });
       setSerialModalStatus({ type: "success", text: "Serial dispatched successfully." });
-      setLotSerials((prev) => ({
-        ...prev,
-        [detailSerial.lotId]: prev[detailSerial.lotId]?.filter((serial) => serial.id !== detailSerial.id)
-      }));
+      setLotSerials((prev) => {
+        const identifier = detailSerial.lotId || detailSerial.lotNumber || detailSerial.id;
+        const lotKey = `${identifier}_${detailSerial.warehouseId}`;
+        return {
+          ...prev,
+          [lotKey]: prev[lotKey]?.filter((serial) => serial.id !== detailSerial.id)
+        };
+      });
       setDetailSerial(null);
     } catch (error) {
       setSerialModalStatus({ type: "error", text: error?.response?.data || "Dispatch failed." });
@@ -426,8 +440,11 @@ export default function Lots() {
                       </tr>
                     </thead>
                     <tbody>
-                      {selectedProduct.lots.map((lot) => (
-                        <React.Fragment key={`${lot.id}-${lot.lotNumber}`}>
+                      {selectedProduct.lots.map((lot, idx) => {
+                        const identifier = lot.lotId || lot.lotNumber || lot.id;
+                        const lotKey = `${identifier}_${lot.warehouseId}`;
+                        return (
+                        <React.Fragment key={`${lotKey}-${lot.lotNumber}-${idx}`}>
                           <tr>
                             <td className="fw-bold font-monospace text-dark">{lot.lotNumber}</td>
                             <td className="text-muted">{lot.warehouseName}</td>
@@ -439,15 +456,16 @@ export default function Lots() {
                               {lot.quantity.toFixed(2)}
                             </td>
                             <td className="text-center">
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-outline-secondary"
-                              onClick={() => toggleLotSerials(lot)}
-                              disabled={!lot.lotId}
-                              title={!lot.lotId ? "Lot not assigned" : undefined}
-                            >
-                              {openLotForSerials === lot.lotId ? 'Hide Serials' : 'View Serials'}
-                            </button>
+                              {/* RESTORED: Exact layout without the Generate Button */}
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-outline-secondary"
+                                onClick={() => toggleLotSerials(lot)}
+                                disabled={!identifier || lot.lotNumber === "General Inventory"}
+                                title={(!identifier || lot.lotNumber === "General Inventory") ? "No serials to view" : undefined}
+                              >
+                                {openLotForSerials === lotKey ? 'Hide Serials' : 'View Serials'}
+                              </button>
                             </td>
                             <td className="text-center">
                               <span className={`erp-status-tag ${lot.quantity > 0 ? 'tag-success' : 'tag-danger'}`}>
@@ -455,16 +473,16 @@ export default function Lots() {
                               </span>
                             </td>
                           </tr>
-                          {openLotForSerials === lot.lotId && (
+                          {openLotForSerials === lotKey && (
                             <tr>
                               <td colSpan="6" className="bg-light serial-detail">
-                                {serialsLoadingLot === lot.lotId ? (
+                                {serialsLoadingLot === lotKey ? (
                                   <div className="text-muted small py-2">Loading serial numbers...</div>
                                 ) : serialsErrorLot ? (
                                   <div className="text-danger small py-2">{serialsErrorLot}</div>
-                                ) : lotSerials[lot.lotId]?.length ? (
+                                ) : lotSerials[lotKey]?.length ? (
                                   <div className="d-flex flex-wrap gap-2">
-                                {lotSerials[lot.lotId].map((serial) => (
+                                {lotSerials[lotKey].map((serial) => (
                                   <div
                                     key={serial.id}
                                     className="serial-chip"
@@ -494,7 +512,7 @@ export default function Lots() {
                             </tr>
                           )}
                         </React.Fragment>
-                      ))}
+                      )})}
                     </tbody>
                   </table>
                 </div>
