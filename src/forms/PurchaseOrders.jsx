@@ -42,6 +42,13 @@ export default function PurchaseOrders() {
     generateSerials: false
   });
 
+  const [showSerialModal, setShowSerialModal] = useState(false);
+  const [serialGenerationForm, setSerialGenerationForm] = useState({
+    quantity: 0,
+    prefix: '',
+    generatedSerials: []
+  });
+
   const loadData = async () => {
     setLoading(true);
     try {
@@ -129,27 +136,70 @@ export default function PurchaseOrders() {
   const receiveIsAiPo = Boolean(selectedReceiveLine?.isAiGenerated || selectedReceivePo?.isAiGenerated);
   const receiveSuggestedLot = selectedReceiveLine?.suggestedLotNumber || '';
 
-  const serialPreview = useMemo(() => {
-    if (!receiveForm.generateSerials || !selectedReceiveItem) return [];
-
-    const quantity = Math.max(0, Math.min(5, Math.floor(Number(receiveForm.quantity) || Number(selectedReceiveLine?.pendingQuantity) || 0)));
-    if (!quantity) return [];
-
-    const prefixSource = selectedReceiveItem.serialPrefix || selectedReceiveItem.itemCode || 'SER';
-    const normalizedPrefix = String(prefixSource).trim().toUpperCase().replace(/[^A-Z0-9-]/g, '') || 'SER';
-    return Array.from({ length: quantity }, (_, index) => `${normalizedPrefix}-NEXT${index + 1}`);
-  }, [receiveForm.generateSerials, receiveForm.quantity, selectedReceiveItem, selectedReceiveLine]);
-
   useEffect(() => {
     if (!selectedReceiveLine) return;
 
-    setReceiveForm((prev) => ({
-      ...prev,
-      quantity: prev.quantity > 0 ? prev.quantity : Number(selectedReceiveLine.pendingQuantity || 0),
-      lotNumber: receiveIsAiPo ? receiveSuggestedLot : prev.lotNumber,
-      generateSerials: selectedReceiveItem?.serialPrefix ? true : prev.generateSerials
-    }));
+    setReceiveForm((prev) => {
+      const autoGenerateSerials = selectedReceiveItem?.serialPrefix ? true : false;
+      return {
+        ...prev,
+        quantity: prev.quantity > 0 ? prev.quantity : Number(selectedReceiveLine.pendingQuantity || 0),
+        lotNumber: receiveIsAiPo ? receiveSuggestedLot : prev.lotNumber,
+        generateSerials: autoGenerateSerials || prev.generateSerials
+      };
+    });
   }, [receiveIsAiPo, receiveSuggestedLot, selectedReceiveItem, selectedReceiveLine]);
+
+  const openSerialGenerationModal = () => {
+    if (!selectedReceiveItem) {
+      setMessage('⚠ Select an item first.');
+      return;
+    }
+    
+    let qty = Number(receiveForm.quantity);
+    if (!qty || qty <= 0) {
+      qty = Number(selectedReceiveLine?.pendingQuantity) || 0;
+    }
+    
+    if (qty <= 0) {
+      setMessage('⚠ Enter quantity before generating serials.');
+      return;
+    }
+
+    const item = selectedReceiveItem;
+    const prefix = item.serialPrefix || item.itemCode || 'ITEM';
+
+    const normalizedPrefix = String(prefix).trim().toUpperCase().replace(/[^A-Z0-9]/g, '') || 'ITEM';
+
+    setSerialGenerationForm({
+      quantity: qty,
+      prefix: normalizedPrefix,
+      generatedSerials: []
+    });
+    setShowSerialModal(true);
+  };
+
+  const generatePoSerialNumbers = () => {
+    const qty = serialGenerationForm.quantity;
+    if (!qty || qty <= 0 || qty > 9999) {
+      setMessage('⚠ Invalid quantity. Limit: 1-9,999 units per batch');
+      return;
+    }
+
+    const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, '');
+    const randomOffset = Math.floor(Math.random() * 88) + 1;
+
+    const serials = Array.from({ length: qty }, (_, i) => {
+      const poNum = String((randomOffset + i) % 100).padStart(2, '0');
+      return {
+        serialNumber: `${serialGenerationForm.prefix}-${dateStr}-PO${poNum}`,
+        status: 'Available'
+      };
+    });
+
+    setSerialGenerationForm((prev) => ({ ...prev, generatedSerials: serials }));
+    setMessage(`✓ Generated ${qty} serial number(s)`);
+  };
 
   const addPoLine = () => {
     setPoForm((prev) => ({
@@ -260,12 +310,22 @@ export default function PurchaseOrders() {
         return;
       }
 
+      // Validation: if item requires serials, serials must be generated
+      if (selectedReceiveItem?.serialPrefix && serialGenerationForm.generatedSerials.length === 0) {
+        setMessage('⚠ This item requires serial tracking. Please generate serials first.');
+        setLoading(false);
+        return;
+      }
+
       const res = await smartErpApi.receivePurchaseOrder(Number(receiveForm.poId), {
         purchaseOrderLineId: Number(receiveForm.purchaseOrderLineId),
         quantity: Number(receiveForm.quantity),
         lotNumber: receiveForm.lotNumber || null,
         scannerDeviceId: receiveForm.scannerDeviceId,
-        generateSerials: receiveForm.generateSerials
+        generateSerials: serialGenerationForm.generatedSerials.length > 0 ? true : receiveForm.generateSerials,
+        serialNumbers: serialGenerationForm.generatedSerials.length > 0 
+          ? serialGenerationForm.generatedSerials.map(s => s.serialNumber) 
+          : null
       });
 
       const generatedSerialCount = Number(res?.data?.generatedSerialCount || 0);
@@ -279,6 +339,8 @@ export default function PurchaseOrders() {
         scannerDeviceId: 'PO-SCN-01',
         generateSerials: false
       });
+      setSerialGenerationForm({ quantity: 0, prefix: '', generatedSerials: [] });
+      setShowSerialModal(false);
       await loadData();
     } catch (err) {
       setMessage(formatPurchaseOrderError(err, '⚠ PO receiving failed.'));
@@ -469,7 +531,7 @@ export default function PurchaseOrders() {
                   <div className="row g-3 mb-4 p-3 bg-light border rounded">
                     <div className="col-md-6">
                       <label className="erp-label">Receive Quantity <span className="text-danger">*</span></label>
-                      <input type="number" className="form-control erp-input font-monospace text-end" placeholder="0 = full pending" value={receiveForm.quantity} onChange={(e) => setReceiveForm((prev) => ({ ...prev, quantity: e.target.value }))} min="0" step="0.01" />
+                      <input type="number" className="form-control erp-input font-monospace text-end" placeholder="0 = full pending" value={receiveForm.quantity} onChange={(e) => setReceiveForm((prev) => ({ ...prev, quantity: Number(e.target.value) }))} min="0" step="0.01" />
                       <small className="text-muted" style={{fontSize: '0.65rem'}}>Leave 0 to receive all pending.</small>
                     </div>
                     <div className="col-md-6">
@@ -492,35 +554,20 @@ export default function PurchaseOrders() {
                       <input className="form-control erp-input font-monospace text-muted" value={receiveForm.scannerDeviceId} onChange={(e) => setReceiveForm((prev) => ({ ...prev, scannerDeviceId: e.target.value }))} />
                     </div>
                     <div className="col-md-12 mt-2">
-                      <div className="form-check">
-                        <input
-                          id="generatePoSerials"
-                          className="form-check-input"
-                          type="checkbox"
-                          checked={receiveForm.generateSerials}
-                          onChange={(e) => setReceiveForm((prev) => ({ ...prev, generateSerials: e.target.checked }))}
-                        />
-                        <label className="form-check-label erp-label m-0 text-none" htmlFor="generatePoSerials">
-                          Generate Serials During Receipt
-                        </label>
-                      </div>
-                      <small className="text-muted" style={{ fontSize: '0.65rem' }}>
-                        Uses the item serial prefix when available and links generated serials to the PO, lot, and warehouse.
+                      <button
+                        type="button"
+                        onClick={openSerialGenerationModal}
+                        disabled={loading || !selectedReceiveItem || !selectedReceiveLine || Number(receiveForm.quantity) <= 0}
+                        className="btn btn-outline-primary erp-btn w-100 fw-bold py-2"
+                      >
+                        + GENERATE SERIAL NUMBERS
+                      </button>
+                      <small className="text-muted d-block mt-1" style={{ fontSize: '0.65rem' }}>
+                        {selectedReceiveItem?.serialPrefix
+                          ? `Required for this item. ${serialGenerationForm.generatedSerials.length} serial(s) generated.`
+                          : 'Optional. Generate tracking serials for this PO receipt.'}
                       </small>
                     </div>
-                    {receiveForm.generateSerials && selectedReceiveItem && (
-                      <div className="col-md-12 mt-2">
-                        <div className="border rounded bg-white p-2">
-                          <div className="small fw-bold text-muted mb-1">Serial Preview Pattern</div>
-                          <div className="font-monospace small">
-                            {serialPreview.length ? serialPreview.join(', ') : `${(selectedReceiveItem.serialPrefix || selectedReceiveItem.itemCode || 'SER').toUpperCase()}-NEXT#`}
-                          </div>
-                          <small className="text-muted d-block mt-1">
-                            Preview only. Final sequence is generated from the current DB serial counter.
-                          </small>
-                        </div>
-                      </div>
-                    )}
                   </div>
 
                   <button type="submit" className="btn btn-success erp-btn w-100 fw-bold py-2" disabled={loading || !receiveForm.poId}>
@@ -743,7 +790,118 @@ export default function PurchaseOrders() {
         .tag-danger { background-color: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
         .tag-info { background-color: #e0f2fe; color: #075985; border: 1px solid #bae6fd; }
         .tag-secondary { background-color: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
+
+        /* Modal Styles */
+        .erp-modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background-color: rgba(0, 0, 0, 0.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1050;
+        }
+        .erp-dialog {
+          background-color: var(--erp-surface);
+          border-radius: 4px;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+          max-height: 90vh;
+          overflow-y: auto;
+          max-width: 100%;
+        }
+        .erp-dialog-md {
+          max-width: 500px;
+        }
+        .erp-dialog-header {
+          background-color: var(--erp-primary);
+          color: white;
+          padding: 16px;
+          border-bottom: 1px solid #ddd;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .erp-dialog-body {
+          padding: 16px;
+          max-height: calc(90vh - 120px);
+          overflow-y: auto;
+        }
       `}</style>
+
+      {/* SERIAL GENERATION MODAL */}
+      {showSerialModal && (
+        <div className="erp-modal-overlay" style={{ zIndex: 1060 }}>
+          <div className="erp-dialog erp-dialog-md w-100 mx-3">
+            <div className="erp-dialog-header">
+              <h6 className="m-0 fw-bold">PO Serial Number Generation</h6>
+              <button className="btn-close btn-close-white" onClick={() => setShowSerialModal(false)}></button>
+            </div>
+            <div className="erp-dialog-body bg-white p-3">
+              <div className="d-flex justify-content-between align-items-center mb-3 p-3 bg-light border rounded">
+                <div>
+                  <span className="erp-label m-0">Target Qty</span>
+                  <span className="fs-5 fw-bold font-monospace text-primary">{Number(serialGenerationForm.quantity)}</span>
+                </div>
+                <button type="button" className="btn btn-sm btn-outline-primary fw-bold erp-btn" onClick={generatePoSerialNumbers}>
+                  + Generate Sequence
+                </button>
+              </div>
+
+              {message && (
+                <div className="alert alert-info small mb-3" style={{ fontSize: '0.75rem' }}>
+                  {message}
+                </div>
+              )}
+
+              {serialGenerationForm.generatedSerials.length > 0 ? (
+                <div className="border rounded overflow-hidden" style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                  <table className="table table-sm table-striped m-0 font-monospace" style={{ fontSize: '0.8rem' }}>
+                    <thead className="table-light sticky-top">
+                      <tr>
+                        <th className="ps-3 text-uppercase text-muted">S/N</th>
+                        <th className="text-uppercase text-muted">Generated Serial (PO Format)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {serialGenerationForm.generatedSerials.map((s, i) => (
+                        <tr key={i}>
+                          <td className="ps-3 text-muted">{i + 1}</td>
+                          <td className="fw-bold">{s.serialNumber}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-center py-4 text-muted small border rounded bg-light shadow-sm">
+                  Click generate to create unique serials for this PO receipt.
+                </div>
+              )}
+            </div>
+            <div className="p-3 bg-light border-top d-flex justify-content-end gap-2">
+              <button type="button" className="btn btn-light border erp-btn" onClick={() => setShowSerialModal(false)}>Cancel</button>
+              <button
+                type="button"
+                className="btn btn-success erp-btn px-4"
+                onClick={() => {
+                  if (serialGenerationForm.generatedSerials.length === 0) {
+                    setMessage('⚠ Please generate serial numbers first');
+                    return;
+                  }
+                  setShowSerialModal(false);
+                  receivePoLine({ preventDefault: () => {} });
+                }}
+                disabled={serialGenerationForm.generatedSerials.length === 0 || loading}
+              >
+                {loading ? 'Processing...' : 'Confirm & Receive'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

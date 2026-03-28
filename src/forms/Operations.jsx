@@ -244,13 +244,18 @@ export default function Operations() {
 
   const generateSerialNumbers = () => {
     const qty = serialGenerationForm.quantity;
-    if (qty <= 0 || qty > 1000) return showStatus('warning', 'Limit: 1-1,000 units per batch');
+    if (qty <= 0 || qty > 9999) return showStatus('warning', 'Limit: 1-9,999 units per batch');
 
     const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, '');
-    const serials = Array.from({ length: qty }, (_, i) => ({
-      serialNumber: `${serialGenerationForm.prefix}-${dateStr}-${String(i + 1).padStart(4, '0')}`,
-      status: 'Available'
-    }));
+    const randomOffset = Math.floor(Math.random() * 9000) + 1000;
+    
+    const serials = Array.from({ length: qty }, (_, i) => {
+      const serialNum = String((randomOffset + i) % 10000).padStart(4, '0');
+      return {
+        serialNumber: `${serialGenerationForm.prefix}-${dateStr}-${serialNum}`,
+        status: 'Available'
+      };
+    });
 
     setSerialGenerationForm((prev) => ({ ...prev, generatedSerials: serials }));
   };
@@ -317,6 +322,11 @@ export default function Operations() {
       return showStatus('error', 'Lot-tracked receipts require a lot number.');
     }
 
+    // Check if serial generation is needed and was completed
+    if (txMode === 'in' && isSerialTracked && serialGenerationForm.generatedSerials.length === 0) {
+      return showStatus('error', 'Please generate serial numbers before executing receipt.');
+    }
+
     setLoading(true);
     try {
       const numericQuantity = Number(quantity ?? 0);
@@ -342,6 +352,10 @@ export default function Operations() {
       // Add mode-specific payload data
       if (txMode === 'in') {
         payload.lotNumber = lotNumberValue || null;
+        // Include generated serial numbers from modal
+        if (serialGenerationForm.generatedSerials.length > 0) {
+          payload.serialNumbers = serialGenerationForm.generatedSerials.map(s => s.serialNumber);
+        }
       } 
       else if (txMode === 'out') {
         if (!lotIdNumber) {
@@ -772,6 +786,10 @@ export default function Operations() {
               <button 
                 className="btn btn-primary erp-btn px-4" 
                 onClick={() => {
+                  if (serialGenerationForm.generatedSerials.length === 0) {
+                    showStatus('error', 'Please generate serial numbers first');
+                    return;
+                  }
                   setShowSerialModal(false);
                   handleStockTransaction(); 
                 }}
@@ -943,3 +961,474 @@ export default function Operations() {
     </div>
   );
 }
+
+// import React, { useCallback, useEffect, useMemo, useState } from 'react';
+// import api from '../services/apiClient';
+// import MobileScanner from '../components/MobileScanner';
+
+// const MODE_TABS = ['stock', 'scanner'];
+
+// const formatStatusMessage = (value) => {
+//   if (!value) return '';
+//   if (typeof value === 'string') return value;
+//   if (Array.isArray(value)) return value.map(formatStatusMessage).join('; ');
+//   if (typeof value === 'object') {
+//     if (value.message) return value.message;
+//     if (value.title) return value.title;
+//     if (value.errors) {
+//       if (Array.isArray(value.errors)) return value.errors.map(formatStatusMessage).join('; ');
+//       return typeof value.errors === 'string' ? value.errors : JSON.stringify(value.errors);
+//     }
+//     return JSON.stringify(value);
+//   }
+//   return String(value);
+// };
+
+// export default function Operations() {
+//   const [items, setItems] = useState([]);
+//   const [warehouses, setWarehouses] = useState([]);
+//   const [inventory, setInventory] = useState([]);
+//   const [status, setStatus] = useState({ type: '', text: '' });
+//   const [loading, setLoading] = useState(false);
+  
+//   const [activeTab, setActiveTab] = useState('stock');
+//   const [txMode, setTxMode] = useState('in'); // 'in', 'out', 'transfer', 'bulk'
+  
+//   const [txForm, setTxForm] = useState({
+//     itemId: '',
+//     warehouseId: '',
+//     destWarehouseId: '',
+//     quantity: '',
+//     lotNumber: '',
+//     lotId: '',
+//     prefix: ''
+//   });
+
+//   const [showSerialModal, setShowSerialModal] = useState(false);
+//   const [serialGenerationForm, setSerialGenerationForm] = useState({
+//     quantity: 0,
+//     prefix: '',
+//     generatedSerials: []
+//   });
+  
+//   const [availableSerials, setAvailableSerials] = useState([]);
+//   const [serialLoading, setSerialLoading] = useState(false);
+//   const [serialError, setSerialError] = useState('');
+//   const [selectedSerialIds, setSelectedSerialIds] = useState(new Set());
+
+//   const [lotOptions, setLotOptions] = useState([]);
+//   const [lotsLoading, setLotsLoading] = useState(false);
+
+//   const parseNumber = (value) => {
+//     const num = Number(value);
+//     return Number.isNaN(num) ? null : num;
+//   };
+
+//   const toggleSerialSelection = useCallback((serialId) => {
+//     setSelectedSerialIds((prev) => {
+//       const next = new Set(prev);
+//       if (next.has(serialId)) {
+//         next.delete(serialId);
+//       } else {
+//         next.add(serialId);
+//       }
+//       return next;
+//     });
+//   }, []);
+
+//   const showStatus = useCallback((type, text) => {
+//     const normalized = formatStatusMessage(text);
+//     setStatus({ type, text: normalized });
+//     if (normalized) {
+//       setTimeout(() => setStatus({ type: '', text: '' }), 4500);
+//     }
+//   }, []);
+
+//   const fetchData = useCallback(async () => {
+//     setLoading(true);
+//     try {
+//       const [itemsRes, warehousesRes, inventoryRes] = await Promise.all([
+//         api.get('/stock/items'),
+//         api.get('/warehouses'),
+//         api.get('/stock/inventory')
+//       ]);
+//       setItems(itemsRes.data || []);
+//       setWarehouses(warehousesRes.data || []);
+//       setInventory(inventoryRes.data || []);
+//     } catch (err) {
+//       showStatus('error', 'Failed to load master data');
+//     } finally {
+//       setLoading(false);
+//     }
+//   }, [showStatus]);
+
+//   const handleScannerPopulate = useCallback((payload) => {
+//     if (!payload) return;
+//     setTxForm((prev) => ({
+//       ...prev,
+//       ...(payload.itemId ? { itemId: String(payload.itemId) } : {}),
+//       ...(payload.warehouseId ? { warehouseId: String(payload.warehouseId) } : {}),
+//       ...(payload.lotNumber ? { lotNumber: payload.lotNumber } : {}),
+//       ...(payload.lotId ? { lotId: String(payload.lotId) } : {})
+//     }));
+//   }, []);
+
+//   useEffect(() => {
+//     fetchData();
+//   }, [fetchData]);
+
+//   const selectedItemId = parseNumber(txForm.itemId);
+//   const selectedWarehouseId = parseNumber(txForm.warehouseId);
+//   const selectedItem = useMemo(
+//     () => items.find((item) => String(item.id) === txForm.itemId),
+//     [items, txForm.itemId]
+//   );
+  
+//   const isSerialTracked = Boolean(selectedItem?.serialPrefix);
+//   const requiresSerialSelection = isSerialTracked && (txMode === 'out' || txMode === 'transfer');
+//   const requiresLotNumberForIn = Boolean(selectedItem?.isLotTracked && txMode === 'in');
+//   const lotNumberValue = txForm.lotNumber?.trim() ?? '';
+//   const desiredSerialQty = parseNumber(txForm.quantity) ?? 0;
+  
+//   // VALIDATION LOGIC: Check if selected serial count matches form quantity
+//   const isSerialSelectionValid = useMemo(() => {
+//     if (!requiresSerialSelection) return true;
+//     return selectedSerialIds.size === desiredSerialQty && desiredSerialQty > 0;
+//   }, [requiresSerialSelection, selectedSerialIds, desiredSerialQty]);
+
+//   const getAvailableLots = useCallback(() => {
+//     return lotOptions.filter((lot) => lot.lotId !== null && lot.quantity > 0);
+//   }, [lotOptions]);
+
+//   const availableSerialsForAuto = useMemo(
+//     () => availableSerials.filter((serial) => serial.status === 'AVAILABLE'),
+//     [availableSerials]
+//   );
+
+//   const loadLotOptions = useCallback(async () => {
+//     if (!selectedItemId || !selectedWarehouseId) {
+//       setLotOptions([]);
+//       return;
+//     }
+//     setLotsLoading(true);
+//     try {
+//       const res = await api.get('/stock/lots', {
+//         params: { itemId: selectedItemId, warehouseId: selectedWarehouseId }
+//       });
+//       const normalized = (res.data || []).map((lot) => ({
+//         lotId: lot.lotId ?? lot.LotId ?? null,
+//         lotNumber: lot.lotNumber ?? lot.LotNumber ?? 'General',
+//         quantity: Number(lot.quantity ?? lot.Quantity ?? 0)
+//       }));
+//       setLotOptions(normalized);
+//     } catch (err) {
+//       setLotOptions([]);
+//     } finally {
+//       setLotsLoading(false);
+//     }
+//   }, [selectedItemId, selectedWarehouseId]);
+
+//   const fetchSerialsForLot = useCallback(async () => {
+//     if (!requiresSerialSelection || !selectedItemId || !selectedWarehouseId || !txForm.lotId) {
+//       setAvailableSerials([]);
+//       return;
+//     }
+//     const lotIdNumber = Number(txForm.lotId);
+//     if (!Number.isFinite(lotIdNumber)) {
+//       setAvailableSerials([]);
+//       setSerialError('Select a lot before loading serial numbers.');
+//       return;
+//     }
+//     setSerialLoading(true);
+//     try {
+//       const params = { itemId: selectedItemId, warehouseId: selectedWarehouseId, lotId: lotIdNumber, status: 'AVAILABLE' };
+//       const response = await api.get('/stock/serials', { params });
+//       setAvailableSerials(Array.isArray(response.data) ? response.data : []);
+//       setSerialError('');
+//       setSelectedSerialIds(new Set());
+//     } catch (error) {
+//       setAvailableSerials([]);
+//       setSerialError('Unable to load serial numbers.');
+//     } finally {
+//       setSerialLoading(false);
+//     }
+//   }, [requiresSerialSelection, selectedItemId, selectedWarehouseId, txForm.lotId]);
+
+//   useEffect(() => {
+//     loadLotOptions();
+//     setTxForm((prev) => ({ ...prev, lotId: '' }));
+//   }, [loadLotOptions]);
+
+//   useEffect(() => {
+//     fetchSerialsForLot();
+//   }, [fetchSerialsForLot]);
+
+//   const generateSerialNumbers = () => {
+//     const qty = serialGenerationForm.quantity;
+//     if (qty <= 0 || qty > 1000) return showStatus('warning', 'Limit: 1-1,000 units');
+//     const now = new Date();
+//     const dateStr = now.toISOString().slice(2, 10).replace(/-/g, '');
+//     const serials = Array.from({ length: qty }, (_, i) => ({
+//       serialNumber: `${serialGenerationForm.prefix}-${dateStr}-${String(i + 1).padStart(4, '0')}`,
+//       status: 'Available'
+//     }));
+//     setSerialGenerationForm((prev) => ({ ...prev, generatedSerials: serials }));
+//   };
+
+//   const autoSelectSerials = useCallback(() => {
+//     if (!requiresSerialSelection) return;
+//     if (!desiredSerialQty || desiredSerialQty <= 0) return;
+//     if (availableSerialsForAuto.length < desiredSerialQty) {
+//       return showStatus('warning', `Only ${availableSerialsForAuto.length} serials available.`);
+//     }
+//     setSelectedSerialIds(new Set(availableSerialsForAuto.slice(0, desiredSerialQty).map((s) => s.id)));
+//   }, [availableSerialsForAuto, desiredSerialQty, requiresSerialSelection, showStatus]);
+
+//   const handleStockTransaction = async (e) => {
+//     e?.preventDefault();
+
+//     const itemId = parseNumber(txForm.itemId);
+//     const warehouseId = parseNumber(txForm.warehouseId);
+//     const quantity = parseNumber(txForm.quantity);
+//     const lotIdNumber = parseNumber(txForm.lotId);
+//     const destWhId = parseNumber(txForm.destWarehouseId);
+
+//     if (!itemId || !warehouseId || !quantity) return showStatus('error', 'Required fields missing.');
+
+//     setLoading(true);
+//     try {
+//       const numericQuantity = Number(quantity);
+//       let endpoint = `/stock/${txMode}`;
+      
+//       let payload = { 
+//           ItemId: itemId, 
+//           WarehouseId: warehouseId, 
+//           Quantity: numericQuantity 
+//       };
+
+//       if (txMode === 'in') {
+//         payload.LotNumber = lotNumberValue || "";
+//         if (isSerialTracked && serialGenerationForm.generatedSerials.length > 0) {
+//             payload.SerialNumbers = serialGenerationForm.generatedSerials.map(s => s.serialNumber);
+//         }
+//       } else if (txMode === 'out') {
+//         payload.LotId = lotIdNumber;
+//         if (isSerialTracked) payload.SerialIds = Array.from(selectedSerialIds);
+//       } else if (txMode === 'transfer') {
+//         payload.LotId = lotIdNumber;
+//         payload.ToWarehouseId = destWhId;
+//         if (isSerialTracked) payload.SerialIds = Array.from(selectedSerialIds);
+//       }
+
+//       const response = await api.post(endpoint, payload, { 
+//           headers: { "ngrok-skip-browser-warning": "true" } 
+//       });
+
+//       showStatus('success', response.data?.message || 'Transaction successful');
+      
+//       setTxForm({ itemId: '', warehouseId: '', destWarehouseId: '', quantity: '', lotNumber: '', lotId: '', prefix: '' });
+//       setSelectedSerialIds(new Set());
+//       setSerialGenerationForm({ quantity: 0, prefix: '', generatedSerials: [] });
+//       setShowSerialModal(false);
+//       fetchData();
+//     } catch (err) {
+//       showStatus('error', err.response?.data?.message || 'Transaction failed');
+//     } finally { setLoading(false); }
+//   };
+
+//   const openSerialGenerationModal = () => {
+//     const qty = parseFloat(txForm.quantity);
+//     if (!txForm.itemId || !qty || qty <= 0) return showStatus('error', 'Enter valid Item and Quantity');
+    
+//     setSerialGenerationForm({
+//       quantity: qty,
+//       prefix: txForm.prefix || (selectedItem ? selectedItem.itemCode : 'SN'),
+//       generatedSerials: []
+//     });
+//     setShowSerialModal(true);
+//   };
+
+//   return (
+//     <div className="erp-app-wrapper min-vh-100 pb-5 pt-3">
+//       <div className="container-fluid px-4" style={{ maxWidth: '1000px' }}>
+        
+//         <div className="d-flex justify-content-between align-items-end border-bottom mb-4 pb-2">
+//           <div className="erp-tabs border-0 m-0">
+//             {MODE_TABS.map((tab) => (
+//               <button key={tab} onClick={() => setActiveTab(tab)} className={`erp-tab ${activeTab === tab ? 'active' : ''}`}>{tab.toUpperCase()}</button>
+//             ))}
+//           </div>
+//           <button onClick={fetchData} disabled={loading} className="btn btn-sm btn-light border d-flex align-items-center gap-2 text-muted fw-bold shadow-sm" style={{ borderRadius: '3px', marginBottom: '8px' }}>
+//             ↻ Refresh API
+//           </button>
+//         </div>
+
+//         {status.text && (
+//           <div className={`alert erp-alert d-flex justify-content-between align-items-center py-2 mb-4 shadow-sm`} style={{
+//             backgroundColor: status.type === 'error' ? '#fee2e2' : '#dcfce7',
+//             color: status.type === 'error' ? '#991b1b' : '#166534',
+//             border: `1px solid ${status.type === 'error' ? '#f87171' : '#4ade80'}`
+//           }}>
+//             <span className="fw-semibold">{status.text}</span>
+//             <button className="btn-close btn-sm" onClick={() => setStatus({ type: '', text: '' })}></button>
+//           </div>
+//         )}
+
+//         {activeTab === 'stock' && (
+//           <div className="erp-panel shadow-sm">
+//             <div className="erp-panel-header d-flex justify-content-between align-items-center bg-light"><span className="fw-bold fs-6">Stock Operations</span></div>
+//             <div className="p-4 bg-white">
+//               <div className="btn-group w-100 mb-4 shadow-sm flex-wrap" role="group">
+//                 <button type="button" className={`btn erp-btn ${txMode === 'in' ? 'btn-success fw-bold' : 'btn-light border'}`} onClick={() => setTxMode('in')}>📥 IN</button>
+//                 <button type="button" className={`btn erp-btn ${txMode === 'out' ? 'btn-danger fw-bold' : 'btn-light border'}`} onClick={() => setTxMode('out')}>📤 OUT</button>
+//                 <button type="button" className={`btn erp-btn ${txMode === 'transfer' ? 'btn-warning fw-bold text-dark' : 'btn-light border'}`} onClick={() => setTxMode('transfer')}>🔁 XFER</button>
+//               </div>
+
+//               <form onSubmit={handleStockTransaction}>
+//                 <div className="row g-3 mb-3">
+//                     <div className="col-md-6">
+//                       <label className="erp-label">Master Item ID <span className="text-danger">*</span></label>
+//                       <select className="form-select erp-input" value={txForm.itemId} onChange={(e) => setTxForm({ ...txForm, itemId: e.target.value })}>
+//                         <option value="">-- Select Product --</option>
+//                         {items.map((item) => (<option key={item.id} value={item.id}>{item.itemCode}</option>))}
+//                       </select>
+//                     </div>
+//                     <div className="col-md-6">
+//                       <label className="erp-label">Warehouse <span className="text-danger">*</span></label>
+//                       <select className="form-select erp-input" value={txForm.warehouseId} onChange={(e) => setTxForm({ ...txForm, warehouseId: e.target.value })}>
+//                         <option value="">-- Select Location --</option>
+//                         {warehouses.map((warehouse) => (<option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>))}
+//                       </select>
+//                     </div>
+//                 </div>
+
+//                 <fieldset disabled={!txForm.itemId}>
+//                     <div className="row g-3 mb-4">
+//                       <div className="col-md-4">
+//                         <label className="erp-label">Quantity <span className="text-danger">*</span></label>
+//                         <input type="number" className="form-control erp-input" value={txForm.quantity} onChange={(e) => setTxForm({ ...txForm, quantity: e.target.value })} min="0" />
+//                       </div>
+//                       <div className="col-md-8">
+//                         {txMode === 'in' ? (
+//                           <>
+//                             <label className="erp-label">Batch / Lot Number</label>
+//                             <input type="text" className="form-control erp-input" value={txForm.lotNumber} onChange={(e) => setTxForm({ ...txForm, lotNumber: e.target.value })} placeholder="Enter Lot" />
+//                           </>
+//                         ) : (
+//                           <>
+//                             <label className="erp-label">Source Lot <span className="text-danger">*</span></label>
+//                             <select className="form-select erp-input" value={txForm.lotId} onChange={(e) => setTxForm({ ...txForm, lotId: e.target.value })}>
+//                               <option value="">-- Choose Active Lot --</option>
+//                               {getAvailableLots().map((lot) => (<option key={lot.lotId} value={lot.lotId}>{lot.lotNumber} (Avail: {lot.quantity})</option>))}
+//                             </select>
+//                           </>
+//                         )}
+//                       </div>
+//                     </div>
+
+//                   {txMode === 'transfer' && (
+//                     <div className="row g-3 mb-4 p-3 bg-light border rounded m-0">
+//                       <div className="col-md-12 p-0">
+//                         <label className="erp-label text-warning">Destination Warehouse <span className="text-danger">*</span></label>
+//                         <select className="form-select erp-input fw-bold text-primary" value={txForm.destWarehouseId} onChange={(e) => setTxForm({ ...txForm, destWarehouseId: e.target.value })}>
+//                           <option value="">-- Select Target --</option>
+//                           {warehouses.filter((w) => w.id !== parseInt(txForm.warehouseId)).map((w) => (<option key={w.id} value={w.id}>{w.name}</option>))}
+//                         </select>
+//                       </div>
+//                     </div>
+//                   )}
+
+//                   <div className="d-flex flex-column gap-2 pt-3 border-top mt-2">
+//                     {txMode === 'in' && isSerialTracked && (
+//                       <button type="button" onClick={openSerialGenerationModal} className="btn btn-outline-primary erp-btn w-100 fw-bold shadow-sm">+ ASSIGN SERIAL NUMBERS</button>
+//                     )}
+                    
+//                     {/* BUTTON VALIDATION: Button is disabled and label changes based on serial selection */}
+//                     <button 
+//                       type="submit" 
+//                       disabled={loading || !isSerialSelectionValid} 
+//                       className={`btn erp-btn w-100 py-3 fw-bold ${txMode === 'in' ? 'btn-success' : txMode === 'out' ? 'btn-danger' : 'btn-warning'}`}
+//                     >
+//                       {loading ? 'PROCESSING...' : !isSerialSelectionValid ? `SELECT ${desiredSerialQty} SERIALS TO PROCEED` : `EXECUTE ${txMode.toUpperCase()}`}
+//                     </button>
+//                   </div>
+//                 </fieldset>
+//               </form>
+
+//               {requiresSerialSelection && (
+//                 <div className="mt-4 p-4 border rounded bg-white shadow-sm">
+//                   <div className="d-flex justify-content-between align-items-center mb-3">
+//                     <div><div className="fw-bold">Serial Selection</div><div className="text-muted small">Select {desiredSerialQty} units</div></div>
+//                     <div className="d-flex gap-2 align-items-center">
+//                       <button type="button" className="btn btn-sm btn-outline-success" onClick={autoSelectSerials}>Auto-select</button>
+//                       <span className={`badge ${isSerialSelectionValid ? 'bg-success' : 'bg-info'}`}>{selectedSerialIds.size}/{desiredSerialQty}</span>
+//                     </div>
+//                   </div>
+//                   <div className="d-flex flex-column gap-2" style={{ maxHeight: '200px', overflowY: 'auto' }}>
+//                     {availableSerials.length > 0 ? availableSerials.map((s) => (
+//                       <label key={s.id} className="serial-entry d-flex gap-2 align-items-center">
+//                         <input type="checkbox" checked={selectedSerialIds.has(s.id)} onChange={() => toggleSerialSelection(s.id)} />
+//                         <span className="fw-bold">{s.serialNumber}</span>
+//                       </label>
+//                     )) : <div className="text-muted small">No serials available for this lot.</div>}
+//                   </div>
+//                 </div>
+//               )}
+//             </div>
+//           </div>
+//         )}
+//       </div>
+
+//       {showSerialModal && (
+//         <div className="erp-modal-overlay">
+//           <div className="erp-dialog erp-dialog-md w-100 mx-3">
+//             <div className="erp-dialog-header">
+//               <h6 className="m-0 fw-bold">Serial Generation</h6>
+//               <button className="btn-close btn-close-white" onClick={() => setShowSerialModal(false)}></button>
+//             </div>
+//             <div className="erp-dialog-body bg-white p-3">
+//               <div className="d-flex justify-content-between align-items-center mb-3 p-3 bg-light border rounded">
+//                 <div><span className="erp-label m-0">Required Qty</span><span className="fs-5 fw-bold text-primary">{serialGenerationForm.quantity}</span></div>
+//                 <button className="btn btn-sm btn-outline-primary fw-bold" onClick={generateSerialNumbers}>+ Generate Batch</button>
+//               </div>
+//               {serialGenerationForm.generatedSerials.length > 0 && (
+//                 <div className="border rounded overflow-hidden" style={{ maxHeight: '300px', overflowY: 'auto' }}>
+//                   <table className="table table-sm m-0 font-monospace">
+//                     <tbody>{serialGenerationForm.generatedSerials.map((s, i) => (<tr key={i}><td className="ps-3 text-muted">{i + 1}</td><td className="fw-bold">{s.serialNumber}</td></tr>))}</tbody>
+//                   </table>
+//                 </div>
+//               )}
+//             </div>
+//             <div className="p-3 bg-light border-top d-flex justify-content-end gap-2">
+//               <button className="btn btn-light border" onClick={() => setShowSerialModal(false)}>Cancel</button>
+//               <button className="btn btn-primary" onClick={() => setShowSerialModal(false)}>Apply</button>
+//             </div>
+//           </div>
+//         </div>
+//       )}
+
+//       <style>{`
+//         :root { --erp-primary: #0f4c81; --erp-bg: #eef2f5; --erp-surface: #ffffff; --erp-border: #cfd8dc; --erp-text-main: #263238; --erp-text-muted: #607d8b; }
+//         .erp-app-wrapper { background-color: var(--erp-bg); color: var(--erp-text-main); font-family: 'Segoe UI', sans-serif; font-size: 0.85rem; }
+//         .erp-tabs { display: flex; gap: 20px; }
+//         .erp-tab { background: none; border: none; padding: 10px 16px; font-weight: 700; color: var(--erp-text-muted); cursor: pointer; position: relative; }
+//         .erp-tab.active { color: var(--erp-primary); }
+//         .erp-tab.active::after { content: ''; position: absolute; bottom: -2px; left: 0; width: 100%; height: 3px; background-color: var(--erp-primary); }
+//         .erp-panel { background: var(--erp-surface); border: 1px solid var(--erp-border); border-radius: 4px; overflow: hidden; }
+//         .erp-panel-header { background-color: #f8f9fa; border-bottom: 1px solid var(--erp-border); padding: 12px 16px; font-weight: bold; }
+//         .erp-input { border-radius: 3px; border-color: #b0bec5; padding: 8px 10px; }
+//         .erp-btn { border-radius: 3px; font-weight: 600; padding: 6px 14px; }
+//         .erp-label { font-size: 0.75rem; font-weight: 700; color: var(--erp-text-muted); text-transform: uppercase; display: block; }
+//         .erp-modal-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(38, 50, 56, 0.6); display: flex; align-items: center; justify-content: center; z-index: 1050; }
+//         .erp-dialog { background: var(--erp-surface); border-radius: 4px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); max-width: 500px; }
+//         .erp-dialog-header { background-color: var(--erp-primary); color: white; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; }
+//         .serial-entry { border: 1px solid var(--erp-border); padding: 8px; border-radius: 4px; margin-bottom: 5px; cursor: pointer; }
+//         .serial-entry:hover { background-color: #f8fafc; }
+//       `}</style>
+//     </div>
+//   );
+// }
+
+
+
+

@@ -1170,13 +1170,37 @@ export default function MobileScanner({
       return showStatus('warning', 'Serial generation limited to 1-100 units per batch');
     }
     
-    const prefix = currentItem?.serialPrefix || `SN-${currentItem?.itemCode || 'ITEM'}`;
-    const timestamp = Date.now().toString().slice(-4);
-    const serials = Array.from({ length: qty }, (_, i) => ({
-      serialNumber: `${prefix}-${timestamp}-${String(i + 1).padStart(4, '0')}`
-    }));
+    const itemCode = currentItem?.itemCode || 'ITEM';
+    const serialPrefix = (currentItem?.serialPrefix || itemCode).trim().toUpperCase().replace(/[^A-Z0-9]/g, '') || 'ITEM';
+    const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, '');
+    
+    let serials;
+    
+    // Different format for PO vs manual stock
+    if (activeTab === 'po') {
+      // PO Format: PREFIX-YYMMDD-PO##
+      const randomOffset = Math.floor(Math.random() * 88) + 1;
+      serials = Array.from({ length: qty }, (_, i) => {
+        const poNum = String((randomOffset + i) % 100).padStart(2, '0');
+        return {
+          serialNumber: `${serialPrefix}-${dateStr}-PO${poNum}`,
+          status: 'Available'
+        };
+      });
+    } else {
+      // Manual IN/OUT/TRANSFER Format: PREFIX-YYMMDD-####
+      const randomOffset = Math.floor(Math.random() * 9000) + 1000;
+      serials = Array.from({ length: qty }, (_, i) => {
+        const serialNum = String((randomOffset + i) % 10000).padStart(4, '0');
+        return {
+          serialNumber: `${serialPrefix}-${dateStr}-${serialNum}`,
+          status: 'Available'
+        };
+      });
+    }
 
     setSerialGenerationForm(prev => ({ ...prev, generatedSerials: serials }));
+    showStatus('success', `✓ Generated ${qty} serial number(s)`);
   };
 
   // --- TRANSACTION EXECUTION ---
@@ -1184,6 +1208,13 @@ export default function MobileScanner({
     e?.preventDefault();
     if (!txForm.itemId || !txForm.warehouseId || !txForm.quantity) {
       return showStatus('error', 'Provide valid item, warehouse, and quantity');
+    }
+
+    // Check if item requires serials for IN/PO transactions
+    if ((activeTab === 'stock' && txMode === 'in') || activeTab === 'po') {
+      if (currentItem?.serialPrefix && serialGenerationForm.generatedSerials.length === 0) {
+        return showStatus('error', '⚠ This item requires serial tracking. Please generate serials first.');
+      }
     }
 
     setLoading(true);
@@ -1204,10 +1235,17 @@ export default function MobileScanner({
         if (!selectedPo || !currentPoLine) return showStatus('error', 'Valid PO Line required');
         if (payload.quantity > currentPoLine.pendingQty) return showStatus('error', 'Exceeds PO pending amount');
         
-        endpoint = '/purchase-orders/receive';
-        payload.poId = selectedPo.id;
-        payload.lotNumber = txForm.lotNumber?.trim() || `LOT-${Date.now().toString().slice(-6)}`;
-        payload.scannerDeviceId = 'MOBILE-SCAN';
+        endpoint = `/purchase-orders/${selectedPo.id}/receive`;
+        payload = {
+          purchaseOrderLineId: currentPoLine.lineId,
+          quantity: payload.quantity,
+          lotNumber: txForm.lotNumber?.trim() || `LOT-${Date.now().toString().slice(-6)}`,
+          scannerDeviceId: 'MOBILE-SCAN',
+          generateSerials: serialGenerationForm.generatedSerials.length > 0 ? true : false,
+          serialNumbers: serialGenerationForm.generatedSerials.length > 0 
+            ? serialGenerationForm.generatedSerials.map(s => s.serialNumber) 
+            : null
+        };
       } 
       else if (activeTab === 'stock' && txMode === 'in') {
         endpoint = '/stock/in';
