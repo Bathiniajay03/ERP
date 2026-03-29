@@ -2144,30 +2144,30 @@ export default function MobileScanner({
     const yy = String(now.getFullYear()).slice(-2);
     const mm = String(now.getMonth() + 1).padStart(2, '0');
     const dd = String(now.getDate()).padStart(2, '0');
-    const hh = String(now.getHours()).padStart(2, '0');
-    const min = String(now.getMinutes()).padStart(2, '0');
-    const ss = String(now.getSeconds()).padStart(2, '0');
+    
+    // Format: MMDDYY (e.g. 032926 for March 29, 2026)
+    const dateStr = `${mm}${dd}${yy}`;
     
     let serials;
     
     // Different format for PO vs manual stock
     if (activeTab === 'po') {
-      // PO Format: [PREFIX]PO[MMDD]-[HHMMSS]-[ID] (No Year, shorter barcode)
-      // e.g., AJPO0328-214423-0001
+      // PO Format: SCNPO-[MMDDYY]-[ID]
+      // e.g., SCNPO-032926-001
       serials = Array.from({ length: qty }, (_, i) => {
-        const uniqueId = String(i + 1).padStart(4, '0');
+        const uniqueId = String(i + 1).padStart(3, '0');
         return {
-          serialNumber: `${serialPrefix}PO${mm}${dd}-${hh}${min}${ss}-${uniqueId}`,
+          serialNumber: `SCNPO-${dateStr}-${uniqueId}`,
           status: 'Available'
         };
       });
     } else {
-      // Manual IN/OUT/TRANSFER Format: [PREFIX]-[YYMMDD]-[HHMMSS]-[ID]
-      // e.g., AJ01-260328-214423-0001
+      // Manual IN/OUT/TRANSFER Format: [PREFIX]-[MMDDYY]-[ID]
+      // e.g., ITEMNAME-032926-001
       serials = Array.from({ length: qty }, (_, i) => {
-        const uniqueId = String(i + 1).padStart(4, '0');
+        const uniqueId = String(i + 1).padStart(3, '0');
         return {
-          serialNumber: `${serialPrefix}-${yy}${mm}${dd}-${hh}${min}${ss}-${uniqueId}`,
+          serialNumber: `${serialPrefix}-${dateStr}-${uniqueId}`,
           status: 'Available'
         };
       });
