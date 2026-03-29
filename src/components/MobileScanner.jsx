@@ -1733,30 +1733,10 @@
 //     </div>
 //   );
 // }
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-
-// =====================================================================
-// ⚠️ IMPORTANT: UNCOMMENT THESE LINES IN YOUR LOCAL PROJECT! ⚠️
-// =====================================================================
-// import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
-// import api from '../services/apiClient';
-
-// --- Mock fallbacks to prevent the online preview from crashing ---
-// --- DELETE THESE MOCKS IN YOUR LOCAL PROJECT ---
-const api = {
-  get: async (url) => {
-    if (url === '/purchase-orders/pending') return { data: [] };
-    if (url === '/stock/lots') return { data: [] };
-    return { data: { itemId: 1, itemCode: 'MOCK-123', itemName: 'Mock Item', serialPrefix: 'MCK' } };
-  },
-  post: async () => ({ data: { message: "Transaction recorded successfully" } })
-};
-class BrowserMultiFormatReader {
-  decodeFromVideoDevice() { return Promise.resolve(); }
-  reset() {}
-}
-const NotFoundException = class extends Error {};
-// ------------------------------------------------------------------
+import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
+import api from '../services/apiClient';
 
 const SCAN_COOLDOWN_MS = 2000;
 
@@ -1786,9 +1766,6 @@ export default function MobileScanner({
   const videoRef = useRef(null);
   const codeReaderRef = useRef(null);
   const lastScan = useRef({ barcode: '', timestamp: 0 });
-  
-  // Track continuous sequence across multiple generations
-  const serialSeqRef = useRef(parseInt(localStorage.getItem('erp_serial_seq') || '0', 10));
 
   // --- Global States ---
   const [cameraActive, setCameraActive] = useState(false);
@@ -1931,8 +1908,7 @@ export default function MobileScanner({
     if (!txForm.itemId) {
       setFilteredPoList(poList);
     } else {
-      // FIX: Use pendingQuantity instead of pendingQty
-      const filtered = poList.filter(po => po.lines.some(l => String(l.itemId) === String(txForm.itemId) && l.pendingQuantity > 0));
+      const filtered = poList.filter(po => po.lines.some(l => String(l.itemId) === String(txForm.itemId) && l.pendingQty > 0));
       setFilteredPoList(filtered);
       
       if (filtered.length === 1 && selectedPoNumber !== filtered[0].poNumber) {
@@ -1994,8 +1970,7 @@ export default function MobileScanner({
 
         // STRICT PO VALIDATION: If in PO tab, ensure item belongs to a pending PO
         if (activeTab === 'po') {
-          // FIX: Use pendingQuantity instead of pendingQty
-          const isItemInAnyPO = poList.some(po => po.lines.some(l => String(l.itemId) === String(payload.itemId) && l.pendingQuantity > 0));
+          const isItemInAnyPO = poList.some(po => po.lines.some(l => String(l.itemId) === String(payload.itemId) && l.pendingQty > 0));
           if (!isItemInAnyPO) {
             showStatus('error', `Item ${payload.itemCode} is NOT in any pending Purchase Order.`);
             stopCamera();
@@ -2169,39 +2144,34 @@ export default function MobileScanner({
     const yy = String(now.getFullYear()).slice(-2);
     const mm = String(now.getMonth() + 1).padStart(2, '0');
     const dd = String(now.getDate()).padStart(2, '0');
-    
-    // Format: MMDDYY (e.g. 032926)
-    const dateStr = `${mm}${dd}${yy}`;
-    const currentSeq = serialSeqRef.current;
+    const hh = String(now.getHours()).padStart(2, '0');
+    const min = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
     
     let serials;
     
     // Different format for PO vs manual stock
     if (activeTab === 'po') {
-      // PO Format: SCNPO-[MMDDYY]-[ID]
-      // e.g., SCNPO-032926-001
+      // PO Format: [PREFIX]PO[MMDD]-[HHMMSS]-[ID] (No Year, shorter barcode)
+      // e.g., AJPO0328-214423-0001
       serials = Array.from({ length: qty }, (_, i) => {
-        const uniqueId = String(currentSeq + i + 1).padStart(3, '0');
+        const uniqueId = String(i + 1).padStart(4, '0');
         return {
-          serialNumber: `SCNPO-${dateStr}-${uniqueId}`,
+          serialNumber: `${serialPrefix}PO${mm}${dd}-${hh}${min}${ss}-${uniqueId}`,
           status: 'Available'
         };
       });
     } else {
-      // Manual IN/OUT/TRANSFER Format: [PREFIX]-[MMDDYY]-[ID]
-      // e.g., ITEMNAME-032926-001
+      // Manual IN/OUT/TRANSFER Format: [PREFIX]-[YYMMDD]-[HHMMSS]-[ID]
+      // e.g., AJ01-260328-214423-0001
       serials = Array.from({ length: qty }, (_, i) => {
-        const uniqueId = String(currentSeq + i + 1).padStart(3, '0');
+        const uniqueId = String(i + 1).padStart(4, '0');
         return {
-          serialNumber: `${serialPrefix}-${dateStr}-${uniqueId}`,
+          serialNumber: `${serialPrefix}-${yy}${mm}${dd}-${hh}${min}${ss}-${uniqueId}`,
           status: 'Available'
         };
       });
     }
-
-    // Increment and save the global sequence to prevent duplicates on next generation
-    serialSeqRef.current += qty;
-    localStorage.setItem('erp_serial_seq', serialSeqRef.current.toString());
 
     setSerialGenerationForm(prev => ({ ...prev, generatedSerials: serials }));
     showStatus('success', `✓ Generated ${qty} serial number(s)`);
@@ -2237,8 +2207,7 @@ export default function MobileScanner({
 
       if (activeTab === 'po') {
         if (!selectedPo || !currentPoLine) return showStatus('error', 'Valid PO Line required');
-        // FIX: Use pendingQuantity instead of pendingQty
-        if (payload.quantity > currentPoLine.pendingQuantity) return showStatus('error', 'Exceeds PO pending amount');
+        if (payload.quantity > currentPoLine.pendingQty) return showStatus('error', 'Exceeds PO pending amount');
         
         endpoint = `/purchase-orders/${selectedPo.id}/receive`;
         payload = {
@@ -2285,6 +2254,7 @@ export default function MobileScanner({
     }
   };
 
+  // *** THIS IS THE MISSING FUNCTION THAT FIXES THE ERROR ***
   const confirmStockTransactionWithSerials = () => {
     handleStockTransaction();
   };
@@ -2356,8 +2326,7 @@ export default function MobileScanner({
               {activeTab === 'po' && currentPoLine && (
                 <div className="mt-2 pt-2 border-top border-success d-flex justify-content-between small fw-bold">
                   <span>PO Line Matched</span>
-                  {/* FIX: Use pendingQuantity instead of pendingQty */}
-                  <span>Pending: {currentPoLine.pendingQuantity}</span>
+                  <span>Pending: {currentPoLine.pendingQty}</span>
                 </div>
               )}
             </div>
@@ -2461,9 +2430,8 @@ export default function MobileScanner({
               <label className="erp-label m-0 mb-2">Target Purchase Order</label>
               <select className="form-select erp-input font-monospace mb-2" value={selectedPoNumber} onChange={(e) => { setSelectedPoNumber(e.target.value); setCurrentPoLine(null); }}>
                 <option value="">-- Select PO --</option>
-                {/* FIX: Use pendingQuantity */}
                 {filteredPoList.map((po) => (
-                  <option key={po.poNumber} value={po.poNumber}>{po.poNumber} (Pending: {po.pendingQuantity})</option>
+                  <option key={po.poNumber} value={po.poNumber}>{po.poNumber} (Pending: {po.totalPending})</option>
                 ))}
               </select>
               {selectedPo && (
