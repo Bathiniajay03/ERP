@@ -1766,6 +1766,9 @@ export default function MobileScanner({
   const videoRef = useRef(null);
   const codeReaderRef = useRef(null);
   const lastScan = useRef({ barcode: '', timestamp: 0 });
+  
+  // Track continuous sequence across multiple generations
+  const serialSeqRef = useRef(parseInt(localStorage.getItem('erp_serial_seq') || '0', 10));
 
   // --- Global States ---
   const [cameraActive, setCameraActive] = useState(false);
@@ -2145,8 +2148,9 @@ export default function MobileScanner({
     const mm = String(now.getMonth() + 1).padStart(2, '0');
     const dd = String(now.getDate()).padStart(2, '0');
     
-    // Format: MMDDYY (e.g. 032926 for March 29, 2026)
+    // Format: MMDDYY (e.g. 032926)
     const dateStr = `${mm}${dd}${yy}`;
+    const currentSeq = serialSeqRef.current;
     
     let serials;
     
@@ -2155,7 +2159,7 @@ export default function MobileScanner({
       // PO Format: SCNPO-[MMDDYY]-[ID]
       // e.g., SCNPO-032926-001
       serials = Array.from({ length: qty }, (_, i) => {
-        const uniqueId = String(i + 1).padStart(3, '0');
+        const uniqueId = String(currentSeq + i + 1).padStart(3, '0');
         return {
           serialNumber: `SCNPO-${dateStr}-${uniqueId}`,
           status: 'Available'
@@ -2165,13 +2169,17 @@ export default function MobileScanner({
       // Manual IN/OUT/TRANSFER Format: [PREFIX]-[MMDDYY]-[ID]
       // e.g., ITEMNAME-032926-001
       serials = Array.from({ length: qty }, (_, i) => {
-        const uniqueId = String(i + 1).padStart(3, '0');
+        const uniqueId = String(currentSeq + i + 1).padStart(3, '0');
         return {
           serialNumber: `${serialPrefix}-${dateStr}-${uniqueId}`,
           status: 'Available'
         };
       });
     }
+
+    // Increment and save the global sequence to prevent duplicates on next generation
+    serialSeqRef.current += qty;
+    localStorage.setItem('erp_serial_seq', serialSeqRef.current.toString());
 
     setSerialGenerationForm(prev => ({ ...prev, generatedSerials: serials }));
     showStatus('success', `✓ Generated ${qty} serial number(s)`);
@@ -2254,7 +2262,6 @@ export default function MobileScanner({
     }
   };
 
-  // *** THIS IS THE MISSING FUNCTION THAT FIXES THE ERROR ***
   const confirmStockTransactionWithSerials = () => {
     handleStockTransaction();
   };
