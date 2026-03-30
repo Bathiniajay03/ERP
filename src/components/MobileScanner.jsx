@@ -1237,12 +1237,15 @@ export default function MobileScanner({
         
         endpoint = `/purchase-orders/${selectedPo.id}/receive`;
         payload = {
-  purchaseOrderLineId: currentPoLine.lineId,
-  quantity: payload.quantity,
-  lotNumber: txForm.lotNumber?.trim() || `LOT-${Date.now().toString().slice(-6)}`,
-  scannerDeviceId: 'MOBILE-SCAN',
-  serialNumbers: serialGenerationForm.generatedSerials.map(s => s.serialNumber)
-};
+          purchaseOrderLineId: currentPoLine.lineId,
+          quantity: payload.quantity,
+          lotNumber: txForm.lotNumber?.trim() || `LOT-${Date.now().toString().slice(-6)}`,
+          scannerDeviceId: 'MOBILE-SCAN',
+          generateSerials: serialGenerationForm.generatedSerials.length > 0 ? true : false,
+          serialNumbers: serialGenerationForm.generatedSerials.length > 0 
+            ? serialGenerationForm.generatedSerials.map(s => s.serialNumber) 
+            : null
+        };
       } 
       else if (activeTab === 'stock' && txMode === 'in') {
         endpoint = '/stock/in';
