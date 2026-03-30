@@ -1087,6 +1087,7 @@ const MODULE_CONFIG = [
       { id: "serialScan", label: "Serial Scan", path: "/serial-scan" },
     ]
   },
+  
   { id: "automation", label: "Automation", path: "/automation" },
   { id: "localAI", label: "Local AI", path: "/local-ai" },
   { id: "notifications", label: "Notifications", path: "/notifications" },
@@ -1558,7 +1559,7 @@ function AppContent() {
           <Route path="/reports" element={renderProtectedRoute("reports", <Reports />)} />
           <Route path="/stock-alerts" element={renderProtectedRoute("stockAlerts", <StockAlerts />)} />
 
-          <Route path="/scanner-device" element={renderProtectedRoute("scannerDevice", <ScannerDevicePage />)} />
+          <Route path="/scanner-device" element={renderProtectedRoute("scannerDevice", <Operations />)} />
           <Route path="/serial-scan" element={renderProtectedRoute("serialScan", <SerialScanPage />)} />
           <Route path="/automation" element={renderProtectedRoute("automation", <Automation />)} />
           <Route path="/local-ai" element={renderProtectedRoute("localAI", <LocalAIPage />)} />
