@@ -181,6 +181,9 @@ export const smartErpApi = {
 
   stockSerials: (params = {}) => api.get("/stock/serials", { params }),
 
+  generateSerialNumbers: (payload) =>
+    api.post("/smart-erp/inventory/generate-serials", payload),
+
   stockTransactions: () =>
     api.get("/stock/transactions"),
 

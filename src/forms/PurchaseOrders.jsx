@@ -1989,8 +1989,8 @@ export default function PurchaseOrders() {
   }, [receiveIsAiPo, receiveSuggestedLot, selectedReceiveItem, selectedReceiveLine]);
 
   const openSerialGenerationModal = () => {
-    if (!selectedReceiveItem) {
-      setMessage('⚠ Select an item first.');
+    if (!selectedReceiveItem || !selectedReceiveLine) {
+      setMessage('⚠ Select a PO line first.');
       return;
     }
     
@@ -2004,10 +2004,8 @@ export default function PurchaseOrders() {
       return;
     }
 
-    const item = selectedReceiveItem;
-    const prefix = item.serialPrefix || item.itemCode || 'ITEM';
-
-    const normalizedPrefix = String(prefix).trim().toUpperCase().replace(/[^A-Z0-9]/g, '') || 'ITEM';
+    const itemCode = selectedReceiveItem?.itemCode || 'ITEM';
+    const normalizedPrefix = `${itemCode}PO`.trim().toUpperCase().replace(/[^A-Z0-9]/g, '') || 'ITEMPO';
 
     setSerialGenerationForm({
       quantity: qty,
@@ -2017,34 +2015,31 @@ export default function PurchaseOrders() {
     setShowSerialModal(true);
   };
 
-  const generatePoSerialNumbers = () => {
+  const generatePoSerialNumbers = async () => {
     const qty = serialGenerationForm.quantity;
     if (!qty || qty <= 0 || qty > 9999) {
       setMessage('⚠ Invalid quantity. Limit: 1-9,999 units per batch');
       return;
     }
 
-    const now = new Date();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const hours = String(now.getHours()).padStart(2, '0');
-    const minutes = String(now.getMinutes()).padStart(2, '0');
-    const seconds = String(now.getSeconds()).padStart(2, '0');
-    
-    // Format: POMMDD-HHMMSS
-    const dateTimeStr = `PO${month}${day}-${hours}${minutes}${seconds}`;
+    try {
+      const res = await smartErpApi.generateSerialNumbers({
+        itemId: Number(selectedReceiveLine?.itemId),
+        warehouseId: Number(selectedReceiveLine?.warehouseId),
+        quantity: qty,
+        serialPrefix: serialGenerationForm.prefix
+      });
 
-    const serials = Array.from({ length: qty }, (_, i) => {
-      // Use sequential numbers so there are no duplicates inside the same generated batch
-      const uniqueId = String(i + 1).padStart(4, '0');
-      return {
-        serialNumber: `${serialGenerationForm.prefix}${dateTimeStr}-${uniqueId}`,
+      const serials = (res?.data?.serialNumbers || []).map((serialNumber) => ({
+        serialNumber,
         status: 'Available'
-      };
-    });
+      }));
 
-    setSerialGenerationForm((prev) => ({ ...prev, generatedSerials: serials }));
-    setMessage(`✓ Generated ${qty} serial number(s)`);
+      setSerialGenerationForm((prev) => ({ ...prev, generatedSerials: serials }));
+      setMessage(`✓ Generated ${qty} serial number(s)`);
+    } catch (err) {
+      setMessage(formatPurchaseOrderError(err, '⚠ Failed to generate serial numbers.'));
+    }
   };
 
   const addPoLine = () => {
@@ -2168,10 +2163,7 @@ export default function PurchaseOrders() {
         quantity: Number(receiveForm.quantity),
         lotNumber: receiveForm.lotNumber || null,
         scannerDeviceId: receiveForm.scannerDeviceId,
-        generateSerials: serialGenerationForm.generatedSerials.length > 0 ? true : receiveForm.generateSerials,
-        serialNumbers: serialGenerationForm.generatedSerials.length > 0 
-          ? serialGenerationForm.generatedSerials.map(s => s.serialNumber) 
-          : null
+        generateSerials: serialGenerationForm.generatedSerials.length > 0 ? true : receiveForm.generateSerials
       });
 
       const generatedSerialCount = Number(res?.data?.generatedSerialCount || 0);

@@ -1242,6 +1242,12 @@ export default function MobileScanner({
   }, [handleDetectedCode, showStatus, findBackCamera]);
 
   useEffect(() => {
+    if (activeTab === 'stock' && txMode === 'out' && requiresSerialSelection && desiredSerialQty > 0) {
+      void autoSelectSerials();
+    }
+  }, [activeTab, txMode, requiresSerialSelection, desiredSerialQty, availableSerialsForAuto, autoSelectSerials]);
+
+  useEffect(() => {
     if (activeTab !== 'create') {
       void startCamera();
     } else {
@@ -1273,6 +1279,7 @@ export default function MobileScanner({
       fetchData(); 
       
       if (newBarcode) await resolveBarcode(newBarcode);
+      void startCamera();
       
     } catch (err) {
       showStatus("error", err?.response?.data?.message || "Registration failed.");
@@ -1296,43 +1303,33 @@ export default function MobileScanner({
     setShowSerialModal(true);
   };
 
-  const generateSerialNumbers = () => {
+  const generateSerialNumbers = async () => {
     const qty = serialGenerationForm.quantity;
     if (qty <= 0 || qty > 100) {
       return showStatus('warning', 'Serial generation limited to 1-100 units per batch');
     }
-    
-    const itemCode = currentItem?.itemCode || 'ITEM';
-    const serialPrefix = (currentItem?.serialPrefix || itemCode).trim().toUpperCase().replace(/[^A-Z0-9]/g, '') || 'ITEM';
-    const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, '');
-    
-    let serials;
-    
-    // Different format for PO vs manual stock
-    if (activeTab === 'po') {
-      // PO Format: PREFIX-YYMMDD-PO##
-      const randomOffset = Math.floor(Math.random() * 88) + 1;
-      serials = Array.from({ length: qty }, (_, i) => {
-        const poNum = String((randomOffset + i) % 100).padStart(2, '0');
-        return {
-          serialNumber: `${serialPrefix}-${dateStr}-PO${poNum}`,
-          status: 'Available'
-        };
-      });
-    } else {
-      // Manual IN/OUT/TRANSFER Format: PREFIX-YYMMDD-####
-      const randomOffset = Math.floor(Math.random() * 9000) + 1000;
-      serials = Array.from({ length: qty }, (_, i) => {
-        const serialNum = String((randomOffset + i) % 10000).padStart(4, '0');
-        return {
-          serialNumber: `${serialPrefix}-${dateStr}-${serialNum}`,
-          status: 'Available'
-        };
-      });
-    }
 
-    setSerialGenerationForm(prev => ({ ...prev, generatedSerials: serials }));
-    showStatus('success', `✓ Generated ${qty} serial number(s)`);
+    const itemCode = currentItem?.itemCode || 'ITEM';
+    const serialPrefix = activeTab === 'po' ? `${itemCode}PO` : itemCode;
+
+    try {
+      const response = await api.post('/smart-erp/inventory/generate-serials', {
+        itemId: parseInt(txForm.itemId, 10),
+        warehouseId: parseInt(txForm.warehouseId, 10),
+        quantity: qty,
+        serialPrefix
+      });
+
+      const serials = (response.data?.serialNumbers || []).map((serialNumber) => ({
+        serialNumber,
+        status: 'Available'
+      }));
+
+      setSerialGenerationForm(prev => ({ ...prev, generatedSerials: serials }));
+      showStatus('success', `✓ Generated ${qty} serial number(s)`);
+    } catch (error) {
+      showStatus('error', error?.response?.data?.message || error?.response?.data || 'Failed to generate serial numbers');
+    }
   };
 
   // --- TRANSACTION EXECUTION ---
@@ -1349,6 +1346,7 @@ export default function MobileScanner({
       }
     }
 
+    stopCamera();
     setLoading(true);
     try {
       const selectedSerialArray = Array.from(selectedSerialIds);
@@ -1372,10 +1370,6 @@ export default function MobileScanner({
       };
 
       // Add Serials if generated
-      if (serialGenerationForm.generatedSerials.length > 0) {
-        payload.serialNumbers = serialGenerationForm.generatedSerials.map(s => s.serialNumber);
-      }
-
       if (activeTab === 'po') {
         if (!selectedPo || !currentPoLine) return showStatus('error', 'Valid PO Line required');
         if (payload.quantity > currentPoLine.pendingQty) return showStatus('error', 'Exceeds PO pending amount');

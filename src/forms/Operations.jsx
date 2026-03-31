@@ -242,22 +242,26 @@ export default function Operations() {
     setShowSerialModal(true);
   };
 
-  const generateSerialNumbers = () => {
+  const generateSerialNumbers = async () => {
     const qty = serialGenerationForm.quantity;
     if (qty <= 0 || qty > 9999) return showStatus('warning', 'Limit: 1-9,999 units per batch');
 
-    const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, '');
-    const randomOffset = Math.floor(Math.random() * 9000) + 1000;
-    
-    const serials = Array.from({ length: qty }, (_, i) => {
-      const serialNum = String((randomOffset + i) % 10000).padStart(4, '0');
-      return {
-        serialNumber: `${serialGenerationForm.prefix}-${dateStr}-${serialNum}`,
-        status: 'Available'
-      };
-    });
+    try {
+      const response = await api.post('/smart-erp/inventory/generate-serials', {
+        itemId: parseInt(txForm.itemId, 10),
+        warehouseId: parseInt(txForm.warehouseId, 10),
+        quantity: qty,
+        serialPrefix: serialGenerationForm.prefix
+      });
 
-    setSerialGenerationForm((prev) => ({ ...prev, generatedSerials: serials }));
+      const serials = (response.data?.serialNumbers || []).map((serialNumber) => ({
+        serialNumber,
+        status: 'Available'
+      }));
+      setSerialGenerationForm((prev) => ({ ...prev, generatedSerials: serials }));
+    } catch (error) {
+      showStatus('error', error?.response?.data?.message || error?.response?.data || 'Failed to generate serial numbers');
+    }
   };
 
   const autoSelectSerials = useCallback(() => {
@@ -352,10 +356,6 @@ export default function Operations() {
       // Add mode-specific payload data
       if (txMode === 'in') {
         payload.lotNumber = lotNumberValue || null;
-        // Include generated serial numbers from modal
-        if (serialGenerationForm.generatedSerials.length > 0) {
-          payload.serialNumbers = serialGenerationForm.generatedSerials.map(s => s.serialNumber);
-        }
       } 
       else if (txMode === 'out') {
         if (!lotIdNumber) {
@@ -961,8 +961,6 @@ export default function Operations() {
     </div>
   );
 }
-
-
 
 
 
