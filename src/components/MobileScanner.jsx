@@ -858,8 +858,8 @@ export default function MobileScanner({
     return Number.isFinite(qty) && qty > 0 ? qty : 0;
   }, [txForm.quantity]);
 
-  const availableDispatchLots = useMemo(
-    () => availableLots.filter((lot) => Number(lot.quantity ?? 0) > 0),
+  const getAvailableLots = useCallback(
+    () => availableLots.filter((lot) => lot.lotId !== null && Number(lot.quantity ?? 0) > 0),
     [availableLots]
   );
 
@@ -936,49 +936,41 @@ export default function MobileScanner({
     loadAvailableLots();
   }, [loadAvailableLots]);
 
-  const autoSelectDispatchLot = useCallback((showFeedback = false) => {
-    if (!(txMode === 'out' || txMode === 'transfer')) return false;
-    if (!availableDispatchLots.length) return false;
-
-    const requiredQty = requestedQty > 0 ? requestedQty : 1;
-    const sufficientLots = [...availableDispatchLots]
-      .filter((lot) => Number(lot.quantity ?? 0) >= requiredQty)
-      .sort((a, b) => Number(a.quantity ?? 0) - Number(b.quantity ?? 0));
-
-    const targetLot = sufficientLots[0] ?? [...availableDispatchLots].sort((a, b) => Number(b.quantity ?? 0) - Number(a.quantity ?? 0))[0];
-    if (!targetLot?.lotId) return false;
-
-    setTxForm((prev) => ({
-      ...prev,
-      lotId: String(targetLot.lotId),
-      lotNumber: targetLot.lotNumber || prev.lotNumber
-    }));
-
-    if (showFeedback) {
-      const availableQty = Number(targetLot.quantity ?? 0);
-      const message = availableQty >= requiredQty
-        ? `Auto-selected lot ${targetLot.lotNumber} with ${availableQty} units available.`
-        : `Selected best available lot ${targetLot.lotNumber}, but only ${availableQty} units are available.`;
-      showStatus(availableQty >= requiredQty ? 'info' : 'warning', message);
-    }
-
-    return true;
-  }, [availableDispatchLots, requestedQty, showStatus, txMode]);
-
-  // Auto-select the best available lot for OUT / TRANSFER after scan, warehouse change, or quantity update.
+  // Match Operations page dispatch behavior: keep lot selection automatic in the background,
+  // but show the stock summary and selected source lot clearly to the user.
   useEffect(() => {
     if (!(txMode === 'out' || txMode === 'transfer')) return;
-    if (!availableDispatchLots.length) return;
 
-    const selectedLot = availableDispatchLots.find((lot) => String(lot.lotId) === String(txForm.lotId));
-    const selectedQty = Number(selectedLot?.quantity ?? 0);
+    const dispatchLots = getAvailableLots();
+    if (!dispatchLots.length) return;
+
+    const selectedLot = dispatchLots.find((lot) => String(lot.lotId) === String(txForm.lotId));
     const requiredQty = requestedQty > 0 ? requestedQty : 1;
-    const needsAutoSelection = !selectedLot || selectedQty < requiredQty;
 
-    if (needsAutoSelection) {
-      autoSelectDispatchLot(false);
+    if (!selectedLot) {
+      const initialLot = dispatchLots.find((lot) => Number(lot.quantity ?? 0) >= requiredQty) ?? dispatchLots[0];
+      setTxForm((prev) => ({
+        ...prev,
+        lotId: String(initialLot.lotId),
+        lotNumber: initialLot.lotNumber || prev.lotNumber
+      }));
+      return;
     }
-  }, [availableDispatchLots, autoSelectDispatchLot, requestedQty, txForm.lotId, txMode]);
+
+    if (Number(selectedLot.quantity ?? 0) < requiredQty) {
+      const replacementLot = dispatchLots.find(
+        (lot) => Number(lot.quantity ?? 0) >= requiredQty && String(lot.lotId) !== String(selectedLot.lotId)
+      );
+
+      if (replacementLot) {
+        setTxForm((prev) => ({
+          ...prev,
+          lotId: String(replacementLot.lotId),
+          lotNumber: replacementLot.lotNumber || prev.lotNumber
+        }));
+      }
+    }
+  }, [getAvailableLots, requestedQty, txForm.lotId, txMode]);
 
   // Auto-Filter POs based on Scanned Item
   useEffect(() => {
@@ -1447,22 +1439,25 @@ export default function MobileScanner({
                     </div>
                   ) : (
                     <div className="col-8">
-                      <div className="d-flex justify-content-between align-items-center mb-1 gap-2">
-                        <label className="erp-label mb-0">Source Lot <span className="text-danger">*</span></label>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-primary py-0 px-2"
-                          onClick={() => autoSelectDispatchLot(true)}
-                          disabled={lotsLoading || availableDispatchLots.length === 0}
-                        >
-                          Auto Select
-                        </button>
-                      </div>
-                      <select className="form-select erp-input font-monospace" value={txForm.lotId} onChange={(e) => setTxForm({ ...txForm, lotId: e.target.value })} disabled={lotsLoading}>
-                        <option value="">{lotsLoading ? 'Loading...' : '-- Select --'}</option>
-                        {availableDispatchLots.map((lot) => (
+                      <label className="erp-label">Select Source Lot <span className="text-danger">*</span></label>
+                      <select
+                        className="form-select erp-input font-monospace"
+                        value={txForm.lotId}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          const matchedLot = getAvailableLots().find((lot) => String(lot.lotId) === value);
+                          setTxForm({
+                            ...txForm,
+                            lotId: value,
+                            lotNumber: matchedLot?.lotNumber ?? ''
+                          });
+                        }}
+                        disabled={lotsLoading}
+                      >
+                        <option value="">{lotsLoading ? 'Loading...' : '-- Choose Active Lot --'}</option>
+                        {getAvailableLots().map((lot) => (
                           <option key={`${lot.lotId}-${lot.lotNumber}`} value={lot.lotId}>
-                            {lot.lotNumber} (Avail: {lot.quantity})
+                            {lot.lotNumber || 'UNASSIGNED'} (Avail: {lot.quantity})
                           </option>
                         ))}
                       </select>
@@ -1495,48 +1490,45 @@ export default function MobileScanner({
               </form>
 
               {currentItem && txMode !== 'in' && (
-                <div className="mt-4 p-3 border rounded bg-light shadow-sm">
-                  <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                <div className="mt-4 p-4 border rounded bg-light shadow-sm">
+                  <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
                     <div>
-                      <div className="fw-bold text-dark">Lot Stock Summary</div>
-                      <div className="text-muted small">
-                        Requested Qty: {requestedQty || 0}
-                      </div>
+                      <h6 className="erp-section-title mb-1">Bin Location Lot Summary</h6>
+                      <div className="text-muted small">Requested Qty: {requestedQty || 0}</div>
                     </div>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-outline-primary"
-                      onClick={() => autoSelectDispatchLot(true)}
-                      disabled={lotsLoading || availableDispatchLots.length === 0}
-                    >
-                      Auto Select Stock
-                    </button>
+                    {txForm.lotId && <span className="badge bg-primary">Dispatch lot selected</span>}
                   </div>
 
                   {lotsLoading ? (
-                    <div className="text-muted small">Loading lot stock...</div>
-                  ) : availableDispatchLots.length === 0 ? (
-                    <div className="text-muted small">No available lot stock found for this scanned item and warehouse.</div>
+                    <div className="text-muted small">Synchronizing lot data...</div>
+                  ) : getAvailableLots().length === 0 ? (
+                    <div className="text-muted small">No active stock units registered for this product/warehouse sequence.</div>
                   ) : (
                     <div className="d-flex flex-column gap-2">
-                      {availableDispatchLots.map((lot) => {
-                        const qty = Number(lot.quantity ?? 0);
+                      {getAvailableLots().map((lot) => {
+                        const quantity = Number(lot.quantity) || 0;
                         const isSelected = String(txForm.lotId) === String(lot.lotId);
-                        const enoughStock = requestedQty <= 0 || qty >= requestedQty;
+                        const isAvailable = quantity > 0;
+                        const enoughStock = requestedQty <= 0 || quantity >= requestedQty;
 
                         return (
                           <div
-                            key={`${lot.lotId ?? 'lot'}-${lot.lotNumber}`}
-                            className={`d-flex justify-content-between align-items-center p-2 border rounded ${isSelected ? 'border-primary bg-white' : 'bg-white'}`}
+                            key={`${lot.lotId ?? 'lot'}-${lot.lotNumber || 'unknown'}`}
+                            className={`erp-lot-row ${isSelected ? 'border-primary bg-white' : ''}`}
                           >
                             <div>
-                              <div className="fw-bold font-monospace text-dark">{lot.lotNumber}</div>
-                              <div className={`small ${enoughStock ? 'text-success' : 'text-warning'}`}>
-                                {enoughStock ? 'Enough stock for dispatch' : 'Partial stock only'}
+                              <div className="fw-bold font-monospace text-dark">{lot.lotNumber || 'UNASSIGNED'}</div>
+                              <div
+                                className="erp-text-muted small"
+                                style={{ color: !isAvailable ? '#b91c1c' : enoughStock ? '#15803d' : '#b45309' }}
+                              >
+                                {!isAvailable ? 'Depleted Lot' : enoughStock ? 'Ready for distribution' : 'Insufficient for requested qty'}
                               </div>
                             </div>
                             <div className="text-end">
-                              <div className="fw-bold font-monospace">{qty}</div>
+                              <div className={`fw-bold fs-5 font-monospace ${isAvailable ? 'text-dark' : 'text-danger'}`}>
+                                {quantity}
+                              </div>
                               {isSelected && <span className="badge bg-primary">Selected</span>}
                             </div>
                           </div>
@@ -1781,6 +1773,26 @@ export default function MobileScanner({
           text-transform: uppercase;
           margin-bottom: 4px;
           display: block;
+        }
+        .erp-section-title {
+          font-size: 0.75rem;
+          font-weight: 700;
+          color: var(--erp-text-muted);
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+        .erp-text-muted {
+          color: var(--erp-text-muted) !important;
+        }
+        .erp-lot-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 12px;
+          padding: 0.75rem 0.9rem;
+          border: 1px solid #dbe4ea;
+          border-radius: 8px;
+          background: #fff;
         }
 
         /* Tabs customization */

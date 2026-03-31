@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useContext } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { localAIApi } from "../services/localAIApi";
 import { LocalAIContext } from "../context/LocalAIContext";
 
@@ -130,6 +132,105 @@ const LocalAIPage = () => {
     }
   };
 
+  const parseStructuredData = (data) => {
+    if (!data) return null;
+
+    if (typeof data === "string") {
+      try {
+        return JSON.parse(data);
+      } catch {
+        return data;
+      }
+    }
+
+    return data;
+  };
+
+  const renderStructuredData = (data) => {
+    const parsed = parseStructuredData(data);
+    if (!parsed) return null;
+
+    if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === "object" && !Array.isArray(parsed[0])) {
+      const columns = Array.from(
+        parsed.reduce((set, row) => {
+          Object.keys(row || {}).forEach((key) => set.add(key));
+          return set;
+        }, new Set())
+      );
+
+      return (
+        <details className="erp-data-card mt-3">
+          <summary className="erp-data-card-title">View structured data</summary>
+          <div className="table-responsive">
+            <table className="table table-sm table-bordered table-striped mb-0 align-middle">
+              <thead className="table-light">
+                <tr>
+                  {columns.map((column) => (
+                    <th key={column}>{column}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {parsed.map((row, rowIndex) => (
+                  <tr key={rowIndex}>
+                    {columns.map((column) => (
+                      <td key={`${rowIndex}-${column}`}>{String(row?.[column] ?? "-")}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      );
+    }
+
+    if (typeof parsed === "object" && !Array.isArray(parsed)) {
+      return (
+        <details className="erp-data-card mt-3">
+          <summary className="erp-data-card-title">View structured data</summary>
+          <div className="table-responsive">
+            <table className="table table-sm table-bordered mb-0 align-middle">
+              <tbody>
+                {Object.entries(parsed).map(([key, value]) => (
+                  <tr key={key}>
+                    <th className="table-light" style={{ width: "35%" }}>{key}</th>
+                    <td>{String(value ?? "-")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      );
+    }
+
+    return (
+      <details className="erp-data-card mt-3">
+        <summary className="erp-data-card-title">View structured data</summary>
+        <div className="p-3 bg-dark text-success font-monospace small overflow-auto">
+          <pre className="m-0" style={{ fontSize: "0.75rem" }}>
+            {String(parsed)}
+          </pre>
+        </div>
+      </details>
+    );
+  };
+
+  const markdownComponents = {
+    p: ({ children }) => <p className="mb-2">{children}</p>,
+    ul: ({ children }) => <ul className="mb-2 ps-3">{children}</ul>,
+    ol: ({ children }) => <ol className="mb-2 ps-3">{children}</ol>,
+    li: ({ children }) => <li className="mb-1">{children}</li>,
+    table: ({ children }) => (
+      <div className="table-responsive erp-markdown-table mb-2">
+        <table className="table table-sm table-bordered table-hover mb-0 align-middle">{children}</table>
+      </div>
+    ),
+    thead: ({ children }) => <thead className="table-light">{children}</thead>,
+    code: ({ children }) => <code className="erp-inline-code">{children}</code>,
+  };
+
   return (
     <div className="erp-app-wrapper vh-100 d-flex flex-column">
       
@@ -164,17 +265,21 @@ const LocalAIPage = () => {
                   </div>
                 )}
 
-                <div className={`erp-chat-bubble shadow-sm p-3 rounded-3 ${msg.type === "user" ? "user-bubble" : "ai-bubble"}`} style={{ maxWidth: '75%' }}>
-                  <div style={{ whiteSpace: "pre-wrap", lineHeight: '1.5' }}>{msg.content}</div>
-                  
-                  {/* Data Payload Rendering */}
-                  {msg.data && (
-                    <div className="mt-3 p-3 bg-dark text-success rounded-2 font-monospace small overflow-auto">
-                      <pre className="m-0" style={{ fontSize: '0.75rem' }}>
-                        {JSON.stringify(msg.data, null, 2)}
-                      </pre>
+                <div
+                  className={`erp-chat-bubble shadow-sm p-3 rounded-3 ${msg.type === "user" ? "user-bubble" : "ai-bubble"}`}
+                  style={{ maxWidth: msg.type === "user" ? '75%' : '90%' }}
+                >
+                  {msg.type === "ai" ? (
+                    <div className="erp-markdown-content">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                        {msg.content}
+                      </ReactMarkdown>
                     </div>
+                  ) : (
+                    <div style={{ whiteSpace: "pre-wrap", lineHeight: '1.5' }}>{msg.content}</div>
                   )}
+
+                  {msg.data && renderStructuredData(msg.data)}
                   
                   <div className={`mt-2 small ${msg.type === "user" ? "text-white-50 text-end" : "text-muted"}`} style={{ fontSize: '0.65rem' }}>
                     {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -308,6 +413,58 @@ const LocalAIPage = () => {
           color: var(--erp-text-main);
           border: 1px solid var(--erp-border);
           border-bottom-left-radius: 4px !important;
+        }
+        .erp-markdown-content {
+          line-height: 1.5;
+        }
+        .erp-markdown-content p:last-child {
+          margin-bottom: 0;
+        }
+        .erp-markdown-table {
+          border: 1px solid #d9e2ec;
+          border-radius: 8px;
+          overflow: hidden;
+          background: #fff;
+        }
+        .erp-markdown-content table {
+          font-size: 0.82rem;
+        }
+        .erp-markdown-content th,
+        .erp-markdown-content td {
+          vertical-align: middle;
+          padding: 0.5rem 0.65rem;
+        }
+        .erp-markdown-content thead th {
+          background: #f8fafc;
+          color: #0f172a;
+          white-space: nowrap;
+        }
+        .erp-inline-code {
+          background: #eef2ff;
+          color: #1d4ed8;
+          padding: 0.1rem 0.35rem;
+          border-radius: 4px;
+          font-size: 0.82em;
+        }
+        .erp-data-card {
+          border: 1px solid #d9e2ec;
+          border-radius: 8px;
+          background: #f8fbfd;
+          overflow: hidden;
+        }
+        .erp-data-card-title {
+          cursor: pointer;
+          list-style: none;
+          padding: 0.65rem 0.85rem;
+          font-size: 0.72rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          color: #0f4c81;
+          background: #eef6fb;
+          border-bottom: 1px solid #d9e2ec;
+        }
+        .erp-data-card-title::-webkit-details-marker {
+          display: none;
         }
 
         .erp-input {
