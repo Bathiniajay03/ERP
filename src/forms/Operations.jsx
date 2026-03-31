@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../services/apiClient';
 import MobileScanner from '../components/MobileScanner';
+import { buildManualSerialPrefix, buildPoSerialPrefix, buildSerialPreview } from '../utils/serialFormat';
 
 const MODE_TABS = ['stock', 'scanner'];
 
@@ -232,7 +233,9 @@ export default function Operations() {
     }
     
     const item = items.find((i) => i.id === parseInt(txForm.itemId, 10));
-    const prefix = txForm.prefix || (item ? item.itemCode.toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 10) : 'SN');
+    const prefix = txMode === 'po'
+      ? buildPoSerialPrefix(item?.itemCode, item?.serialPrefix)
+      : buildManualSerialPrefix(item?.itemCode, item?.serialPrefix);
 
     setSerialGenerationForm({
       quantity: parseFloat(txForm.quantity),
@@ -750,6 +753,9 @@ export default function Operations() {
                 <div>
                   <span className="erp-label m-0">Target Qty</span>
                   <span className="fs-5 fw-bold font-monospace text-primary">{serialGenerationForm.quantity}</span>
+                  <div className="text-muted small font-monospace">
+                    Preview: {buildSerialPreview(serialGenerationForm.prefix)}
+                  </div>
                 </div>
                 <button className="btn btn-sm btn-outline-primary fw-bold erp-btn" onClick={generateSerialNumbers}>
                   + Generate Sequence
@@ -961,6 +967,4 @@ export default function Operations() {
     </div>
   );
 }
-
-
 

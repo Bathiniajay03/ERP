@@ -1830,6 +1830,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { smartErpApi } from '../services/smartErpApi';
+import { buildPoSerialPrefix, buildSerialPreview } from '../utils/serialFormat';
 
 // import DocumentAttachments from '../components/DocumentAttachments';
 
@@ -2004,8 +2005,7 @@ export default function PurchaseOrders() {
       return;
     }
 
-    const itemCode = selectedReceiveItem?.itemCode || 'ITEM';
-    const normalizedPrefix = `${itemCode}PO`.trim().toUpperCase().replace(/[^A-Z0-9]/g, '') || 'ITEMPO';
+    const normalizedPrefix = buildPoSerialPrefix(selectedReceiveItem?.itemCode, selectedReceiveItem?.serialPrefix);
 
     setSerialGenerationForm({
       quantity: qty,
@@ -2682,6 +2682,9 @@ export default function PurchaseOrders() {
                 <div>
                   <span className="erp-label m-0">Target Qty</span>
                   <span className="fs-5 fw-bold font-monospace text-primary">{Number(serialGenerationForm.quantity)}</span>
+                  <div className="text-muted small font-monospace">
+                    Preview: {buildSerialPreview(serialGenerationForm.prefix)}
+                  </div>
                 </div>
                 <button type="button" className="btn btn-sm btn-outline-primary fw-bold erp-btn" onClick={generatePoSerialNumbers}>
                   + Generate Sequence

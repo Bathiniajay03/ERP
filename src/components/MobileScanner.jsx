@@ -771,6 +771,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
 import api from '../services/apiClient';
+import { buildManualSerialPrefix, buildPoSerialPrefix, buildSerialPreview } from '../utils/serialFormat';
 
 const SCAN_COOLDOWN_MS = 2000;
 
@@ -1310,7 +1311,9 @@ export default function MobileScanner({
     }
 
     const itemCode = currentItem?.itemCode || 'ITEM';
-    const serialPrefix = activeTab === 'po' ? `${itemCode}PO` : itemCode;
+    const serialPrefix = activeTab === 'po'
+      ? buildPoSerialPrefix(itemCode, currentItem?.serialPrefix)
+      : buildManualSerialPrefix(itemCode, currentItem?.serialPrefix);
 
     try {
       const response = await api.post('/smart-erp/inventory/generate-serials', {
@@ -1331,6 +1334,10 @@ export default function MobileScanner({
       showStatus('error', error?.response?.data?.message || error?.response?.data || 'Failed to generate serial numbers');
     }
   };
+
+  const serialPreviewPrefix = activeTab === 'po'
+    ? buildPoSerialPrefix(currentItem?.itemCode, currentItem?.serialPrefix)
+    : buildManualSerialPrefix(currentItem?.itemCode, currentItem?.serialPrefix);
 
   // --- TRANSACTION EXECUTION ---
   const handleStockTransaction = async (e) => {
@@ -1862,6 +1869,9 @@ export default function MobileScanner({
                 <div>
                   <span className="erp-label m-0">Target Qty</span>
                   <span className="fs-5 fw-bold font-monospace text-primary">{serialGenerationForm.quantity}</span>
+                  <div className="text-muted small font-monospace">
+                    Preview: {buildSerialPreview(serialPreviewPrefix)}
+                  </div>
                 </div>
                 <button className="btn btn-sm btn-outline-primary fw-bold erp-btn" onClick={generateSerialNumbers}>
                   + Generate Sequence
