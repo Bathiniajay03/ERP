@@ -14,13 +14,14 @@ const LocalAIPage = () => {
     "Find item with laptop or keyword",
     "Create new item ITEM-02",
     "Receive 100 units of ITEM-01 in HYD-EAST lot LOT-01",
+    // you can add more commands here
   ];
 
   const quickActions = [
     { text: "Check stock", command: supportedCommands[0] },
     { text: "Low stock alerts", command: supportedCommands[1] },
     { text: "Find item", command: supportedCommands[1] },
-    { text: "Create item", command: supportedCommands[3] },
+    { text: "Create item", command: supportedCommands[2] },
     { text: "Receive stock", command: supportedCommands[4] },
   ];
 
@@ -41,6 +42,7 @@ const LocalAIPage = () => {
     checkAIStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -72,7 +74,7 @@ const LocalAIPage = () => {
     if (trimmed === "commands" || trimmed === "help") {
       setIsLoading(false);
       const helpText =
-        `Purpose: This assistant only handles ERP product operations — inventory, items, warehouses, stock movements, transfers and reports. I will not process unrelated requests.\n\nI am your built-in AI Assistant! I can understand natural language to help you manage your ERP faster. Here are a few things you can say to me:\n\n**📦 Stock Operations:**\n• 'Check stock for PROD-01'\n• 'Receive 100 boxes of PROD-01 into MAIN'\n• 'Issue 5 units of PROD-01 due to damage'\n• 'Set stock of PROD-01 to 45 in MAIN'\n• 'Show low stock alerts'\n\n**🏷️ Master Data:**\n• 'Create item PROD-02 with description Laptop'\n• 'Create warehouse MAIN-HUB'\n• 'List all items'\n\n**🤖 Advanced Abilities:**\nYou can chain tasks together! Try saying:\n• 'Create item PROD-01 and then receive 100 of them into MAIN'\n\nJust talk to me naturally, and I'll do the rest!`;
+        `👤\n🤖\nPurpose: This assistant only handles ERP product operations — inventory, items, warehouses, stock movements, transfers and reports. I will not process unrelated requests.\n\nI am your built-in AI Assistant! I can understand natural language to help you manage your ERP faster. Here are a few things you can say to me:\n\n**📦 Stock Operations:**\n• 'Check stock for PROD-01'\n• 'Receive 100 boxes of PROD-01 into MAIN'\n• 'Issue 5 units of PROD-01 due to damage'\n• 'Set stock of PROD-01 to 45 in MAIN'\n• 'Show low stock alerts'\n\n**🏷️ Master Data:**\n• 'Create item PROD-02 with description Laptop'\n• 'Create warehouse MAIN-HUB'\n• 'List all items'\n\n**🤖 Advanced Abilities:**\nYou can chain tasks together! Try saying:\n• 'Create item PROD-01 and then receive 100 of them into MAIN'\n\nJust talk to me naturally, and I'll do the rest!`;
       setMessages((prev) => [
         ...prev,
         { type: "ai", content: helpText, timestamp: new Date() },
@@ -115,214 +117,204 @@ const LocalAIPage = () => {
   };
 
   return (
-    <div className="erp-app-wrapper vh-100 d-flex flex-column">
-      
-      {/* HEADER */}
-      <div className="erp-topbar d-flex align-items-center px-4 justify-content-between flex-shrink-0">
-        <div className="fw-bold fs-5 text-white d-flex align-items-center gap-2">
-          <div className="erp-logo-box bg-primary">AI</div>
-          <span>NODE.STOCK <small className="fw-normal opacity-75 ms-2 fs-6">Copilot Terminal</small></span>
-        </div>
-        <div className="d-flex align-items-center gap-2">
-          <span className="text-white-50 small">LLM Engine Status:</span>
-          <span className={`erp-status-tag ${aiStatus === "online" ? "tag-success" : "tag-warning"}`}>
-            {aiStatus === "online" ? "ONLINE & READY" : "OFFLINE"}
-          </span>
-        </div>
+    <div style={styles.container}>
+      {/* Header */}
+      <div style={styles.header}>
+        <h2 style={{ margin: 0 }}>ERP AI Copilot</h2>
+        <span
+          style={{
+            ...styles.status,
+            backgroundColor: aiStatus === "online" ? "#10a37f" : "#f59e0b",
+          }}
+        >
+          {aiStatus === "online" ? "Online" : "Offline"}
+        </span>
       </div>
 
-      {/* CHAT CONTAINER */}
-      <div className="d-flex flex-column flex-grow-1 overflow-hidden bg-light position-relative">
-        
-        {/* Messages Area */}
-        <div className="flex-grow-1 overflow-auto p-4 erp-chat-area">
-          <div className="container" style={{ maxWidth: '900px' }}>
-            {messages.map((msg, index) => (
-              <div
-                key={index}
-                className={`d-flex mb-4 ${msg.type === "user" ? "justify-content-end" : "justify-content-start"}`}
-              >
-                {msg.type === "ai" && (
-                  <div className="erp-avatar ai-avatar shadow-sm me-3 flex-shrink-0 d-flex align-items-center justify-content-center bg-dark text-white rounded">
-                    <span style={{ fontSize: '1.2rem' }}>🤖</span>
-                  </div>
-                )}
+      {/* Chat Area */}
+      <div style={styles.chatArea}>
+        {messages.map((msg, index) => (
+          <div
+            key={index}
+            style={{
+              ...styles.messageRow,
+              justifyContent:
+                msg.type === "user" ? "flex-end" : "flex-start",
+            }}
+          >
+            {msg.type === "ai" && <div style={styles.aiAvatar}>🤖</div>}
 
-                <div className={`erp-chat-bubble shadow-sm p-3 rounded-3 ${msg.type === "user" ? "user-bubble" : "ai-bubble"}`} style={{ maxWidth: '75%' }}>
-                  <div style={{ whiteSpace: "pre-wrap", lineHeight: '1.5' }}>{msg.content}</div>
-                  
-                  {/* Data Payload Rendering */}
-                  {msg.data && (
-                    <div className="mt-3 p-3 bg-dark text-success rounded-2 font-monospace small overflow-auto">
-                      <pre className="m-0" style={{ fontSize: '0.75rem' }}>
-                        {JSON.stringify(msg.data, null, 2)}
-                      </pre>
-                    </div>
-                  )}
-                  
-                  <div className={`mt-2 small ${msg.type === "user" ? "text-white-50 text-end" : "text-muted"}`} style={{ fontSize: '0.65rem' }}>
-                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </div>
-                </div>
+            <div
+              style={{
+                ...styles.bubble,
+                backgroundColor:
+                  msg.type === "user" ? "#10a37f" : "#ffffff",
+                color: msg.type === "user" ? "white" : "black",
+              }}
+            >
+              <div style={{ whiteSpace: "pre-wrap" }}>{msg.content}</div>
+              {msg.data && (
+                <pre style={styles.dataBox}>
+                  {JSON.stringify(msg.data, null, 2)}
+                </pre>
+              )}
+            </div>
 
-                {msg.type === "user" && (
-                  <div className="erp-avatar user-avatar shadow-sm ms-3 flex-shrink-0 d-flex align-items-center justify-content-center bg-primary text-white rounded">
-                    <span style={{ fontSize: '1.2rem' }}>👤</span>
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {/* Typing Indicator */}
-            {isLoading && (
-              <div className="d-flex mb-4 justify-content-start">
-                <div className="erp-avatar ai-avatar shadow-sm me-3 flex-shrink-0 d-flex align-items-center justify-content-center bg-dark text-white rounded">
-                  <span style={{ fontSize: '1.2rem' }}>🤖</span>
-                </div>
-                <div className="erp-chat-bubble ai-bubble shadow-sm p-3 rounded-3 text-muted fst-italic">
-                  Processing natural language...
-                </div>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
+            {msg.type === "user" && <div style={styles.userAvatar}>👤</div>}
           </div>
-        </div>
+        ))}
 
-        {/* Action & Input Area */}
-        <div className="bg-white border-top flex-shrink-0 z-1 shadow-sm">
-          <div className="container py-3" style={{ maxWidth: '900px' }}>
-            
-            {/* Quick Actions */}
-            <div className="d-flex flex-wrap gap-2 mb-3">
-              <span className="text-muted small fw-bold me-2 align-self-center text-uppercase">Quick Actions:</span>
-              {quickActions.map((action, index) => (
-                <button
-                  key={index}
-                  className="btn btn-sm btn-light border erp-btn text-muted fw-bold rounded-pill px-3"
-                  onClick={() => handleSend(action.command)}
-                  disabled={isLoading}
-                >
-                  {action.text}
-                </button>
-              ))}
-            </div>
-
-            {/* Input Box */}
-            <div className="d-flex gap-2">
-              <input
-                type="text"
-                className="form-control erp-input shadow-sm py-2"
-                placeholder="Ask the copilot to check inventory, create items, or move stock..."
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyPress}
-                disabled={isLoading}
-                style={{ fontSize: '0.95rem' }}
-              />
-              <button
-                className="btn btn-primary erp-btn px-4 fw-bold shadow-sm"
-                onClick={() => handleSend()}
-                disabled={isLoading || !input.trim()}
-              >
-                Send Request
-              </button>
-            </div>
-            
-            {/* Context Hint */}
-            <div className="mt-2 text-muted" style={{ fontSize: '0.65rem' }}>
-              <strong>Available contexts:</strong> {supportedCommands.join(" • ")}
+        {isLoading && (
+          <div style={styles.messageRow}>
+            <div style={styles.aiAvatar}>🤖</div>
+            <div style={styles.bubble}>
+              <span>Typing...</span>
             </div>
           </div>
-        </div>
+        )}
 
+        <div ref={messagesEndRef} />
       </div>
 
-      <style>{`
-        /* --- ERP THEME CSS --- */
-        :root {
-          --erp-primary: #0f4c81;
-          --erp-bg: #eef2f5;
-          --erp-surface: #ffffff;
-          --erp-border: #cfd8dc;
-          --erp-text-main: #263238;
-          --erp-text-muted: #607d8b;
-        }
+      {/* Quick Actions */}
+      <div style={styles.quickActions}>
+        {quickActions.map((action, index) => (
+          <button
+            key={index}
+            style={styles.quickBtn}
+            onClick={() => handleSend(action.command)}
+          >
+            {action.text}
+          </button>
+        ))}
+      </div>
 
-        .erp-app-wrapper {
-          background-color: var(--erp-bg);
-          color: var(--erp-text-main);
-          font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-          font-size: 0.85rem;
-        }
+      {/* Input Area */}
+      <div style={styles.inputArea}>
+        <input
+          type="text"
+          placeholder="Ask something about inventory..."
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyPress}
+          style={styles.input}
+        />
+        <button
+          onClick={() => handleSend()}
+          style={styles.sendBtn}
+          disabled={isLoading}
+        >
+          Send
+        </button>
+      </div>
 
-        .erp-topbar {
-          background-color: #1a252f;
-          height: 54px;
-          border-bottom: 3px solid var(--erp-primary);
-          z-index: 10;
-        }
-        .erp-logo-box {
-          color: white;
-          padding: 2px 6px;
-          border-radius: 3px;
-          font-size: 0.9rem;
-          letter-spacing: 1px;
-        }
-
-        .erp-chat-area::-webkit-scrollbar { width: 8px; }
-        .erp-chat-area::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-        .erp-chat-area::-webkit-scrollbar-track { background: transparent; }
-
-        .erp-avatar {
-          width: 40px;
-          height: 40px;
-        }
-
-        .erp-chat-bubble {
-          font-size: 0.9rem;
-          position: relative;
-        }
-        .user-bubble {
-          background-color: var(--erp-primary);
-          color: white;
-          border-bottom-right-radius: 4px !important;
-        }
-        .ai-bubble {
-          background-color: white;
-          color: var(--erp-text-main);
-          border: 1px solid var(--erp-border);
-          border-bottom-left-radius: 4px !important;
-        }
-
-        .erp-input {
-          border-radius: 4px;
-          border-color: #cbd5e1;
-        }
-        .erp-input:focus {
-          border-color: var(--erp-primary);
-          box-shadow: 0 0 0 2px rgba(15, 76, 129, 0.2);
-        }
-        .erp-btn {
-          border-radius: 4px;
-          letter-spacing: 0.2px;
-        }
-
-        /* Status Tags */
-        .erp-status-tag {
-          font-size: 0.65rem;
-          font-weight: 700;
-          padding: 3px 8px;
-          border-radius: 2px;
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-          display: inline-block;
-          white-space: nowrap;
-        }
-        .tag-success { background-color: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
-        .tag-warning { background-color: #fef9c3; color: #854d0e; border: 1px solid #fef08a; }
-      `}</style>
+      {/* Supported commands hint */}
+      <div style={styles.commandsHint}>
+        <strong>Available commands:</strong> {supportedCommands.join(" • ")}
+      </div>
     </div>
   );
+};
+
+const styles = {
+  container: {
+    height: "90vh",
+    display: "flex",
+    flexDirection: "column",
+    backgroundColor: "#f7f7f8",
+    borderRadius: "10px",
+  },
+  header: {
+    padding: "15px 20px",
+    backgroundColor: "white",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderBottom: "1px solid #e5e7eb",
+  },
+  commandsHint: {
+    padding: "10px 20px",
+    fontSize: "0.9rem",
+    color: "#555",
+    backgroundColor: "#fafafa",
+    borderTop: "1px solid #e5e7eb",
+    borderBottom: "1px solid #e5e7eb",
+  },
+  status: {
+    color: "white",
+    padding: "5px 12px",
+    borderRadius: "20px",
+    fontSize: "12px",
+  },
+  chatArea: {
+    flex: 1,
+    overflowY: "auto",
+    padding: "20px",
+  },
+  messageRow: {
+    display: "flex",
+    alignItems: "flex-start",
+    marginBottom: "15px",
+  },
+  bubble: {
+    maxWidth: "70%",
+    padding: "12px",
+    borderRadius: "10px",
+    boxShadow: "0 1px 2px rgba(0,0,0,0.1)",
+  },
+  aiAvatar: {
+    marginRight: "10px",
+    fontSize: "20px",
+  },
+  userAvatar: {
+    marginLeft: "10px",
+    fontSize: "20px",
+  },
+  inputArea: {
+    display: "flex",
+    padding: "15px",
+    backgroundColor: "white",
+    borderTop: "1px solid #e5e7eb",
+  },
+  input: {
+    flex: 1,
+    padding: "10px",
+    borderRadius: "8px",
+    border: "1px solid #ddd",
+    marginRight: "10px",
+  },
+  sendBtn: {
+    padding: "10px 20px",
+    backgroundColor: "#10a37f",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    cursor: "pointer",
+  },
+  quickActions: {
+    padding: "10px 20px",
+    backgroundColor: "#ffffff",
+    borderTop: "1px solid #e5e7eb",
+    display: "flex",
+    gap: "10px",
+    flexWrap: "wrap",
+  },
+  quickBtn: {
+    padding: "6px 12px",
+    borderRadius: "20px",
+    border: "1px solid #ddd",
+    backgroundColor: "#f1f1f1",
+    cursor: "pointer",
+    fontSize: "12px",
+  },
+  dataBox: {
+    marginTop: "10px",
+    backgroundColor: "#f3f4f6",
+    padding: "8px",
+    borderRadius: "6px",
+    fontSize: "12px",
+    overflowX: "auto",
+  },
 };
 
 export default LocalAIPage;
