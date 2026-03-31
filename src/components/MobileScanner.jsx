@@ -842,6 +842,12 @@ export default function MobileScanner({
   const [availableLots, setAvailableLots] = useState([]);
   const [lotsLoading, setLotsLoading] = useState(false);
 
+  // --- Serial Selection States ---
+  const [availableSerials, setAvailableSerials] = useState([]);
+  const [serialLoading, setSerialLoading] = useState(false);
+  const [serialError, setSerialError] = useState('');
+  const [selectedSerialIds, setSelectedSerialIds] = useState(new Set());
+
   // --- Serial Generation Modal States ---
   const [showSerialModal, setShowSerialModal] = useState(false);
   const [serialGenerationForm, setSerialGenerationForm] = useState({
@@ -858,6 +864,20 @@ export default function MobileScanner({
     return Number.isFinite(qty) && qty > 0 ? qty : 0;
   }, [txForm.quantity]);
 
+  const desiredSerialQty = useMemo(() => {
+    const qty = Number.parseInt(txForm.quantity, 10);
+    return Number.isFinite(qty) && qty > 0 ? qty : 0;
+  }, [txForm.quantity]);
+
+  const isSerialTracked = Boolean(currentItem?.serialPrefix);
+  const requiresSerialSelection = isSerialTracked && (txMode === 'out' || txMode === 'transfer');
+  const lotNumberValue = txForm.lotNumber?.trim() ?? '';
+
+  const availableSerialsForAuto = useMemo(
+    () => availableSerials.filter((serial) => String(serial.status || '').toUpperCase() === 'AVAILABLE'),
+    [availableSerials]
+  );
+
   const getAvailableLots = useCallback(
     () => availableLots.filter((lot) => lot.lotId !== null && Number(lot.quantity ?? 0) > 0),
     [availableLots]
@@ -866,6 +886,18 @@ export default function MobileScanner({
   const showStatus = useCallback((type, text) => {
     setStatus({ type, text });
     setTimeout(() => setStatus({ type: '', text: '' }), 4500);
+  }, []);
+
+  const toggleSerialSelection = useCallback((serialId) => {
+    setSelectedSerialIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(serialId)) {
+        next.delete(serialId);
+      } else {
+        next.add(serialId);
+      }
+      return next;
+    });
   }, []);
 
   const findBackCamera = useCallback(async () => {
@@ -935,6 +967,70 @@ export default function MobileScanner({
   useEffect(() => {
     loadAvailableLots();
   }, [loadAvailableLots]);
+
+  const fetchSerialsForLot = useCallback(async () => {
+    if (!requiresSerialSelection || !txForm.itemId || !txForm.warehouseId || !txForm.lotId) {
+      setAvailableSerials([]);
+      setSerialError('');
+      setSelectedSerialIds(new Set());
+      return;
+    }
+
+    const lotIdNumber = Number(txForm.lotId);
+    if (!Number.isFinite(lotIdNumber)) {
+      setAvailableSerials([]);
+      setSerialError('Select a valid lot before loading serial numbers.');
+      setSelectedSerialIds(new Set());
+      return;
+    }
+
+    setSerialLoading(true);
+    try {
+      const params = {
+        itemId: Number(txForm.itemId),
+        warehouseId: Number(txForm.warehouseId),
+        lotId: lotIdNumber,
+        status: 'AVAILABLE'
+      };
+
+      if (lotNumberValue) {
+        params.lotNumber = lotNumberValue;
+      }
+
+      const response = await api.get('/stock/serials', { params });
+      setAvailableSerials(Array.isArray(response.data) ? response.data : []);
+      setSerialError('');
+      setSelectedSerialIds(new Set());
+    } catch (error) {
+      console.error('Serial fetch failed', error);
+      setAvailableSerials([]);
+      setSerialError('Unable to load serial numbers for this lot.');
+      setSelectedSerialIds(new Set());
+    } finally {
+      setSerialLoading(false);
+    }
+  }, [lotNumberValue, requiresSerialSelection, txForm.itemId, txForm.lotId, txForm.warehouseId]);
+
+  useEffect(() => {
+    fetchSerialsForLot();
+  }, [fetchSerialsForLot]);
+
+  const autoSelectSerials = useCallback(() => {
+    if (!requiresSerialSelection) return;
+    if (!desiredSerialQty || desiredSerialQty <= 0) {
+      return showStatus('warning', 'Enter a valid quantity before auto-selecting serial numbers.');
+    }
+    if (availableSerialsForAuto.length < desiredSerialQty) {
+      return showStatus(
+        'warning',
+        `Only ${availableSerialsForAuto.length} available serials found for ${desiredSerialQty} units.`
+      );
+    }
+
+    setSelectedSerialIds(
+      new Set(availableSerialsForAuto.slice(0, desiredSerialQty).map((serial) => serial.id))
+    );
+  }, [availableSerialsForAuto, desiredSerialQty, requiresSerialSelection, showStatus]);
 
   // Match Operations page dispatch behavior: keep lot selection automatic in the background,
   // but show the stock summary and selected source lot clearly to the user.
@@ -1255,6 +1351,19 @@ export default function MobileScanner({
 
     setLoading(true);
     try {
+      const selectedSerialArray = Array.from(selectedSerialIds);
+      if (requiresSerialSelection) {
+        const numericQty = Number.parseFloat(txForm.quantity);
+        if (!Number.isFinite(numericQty) || numericQty <= 0 || !Number.isInteger(numericQty)) {
+          setLoading(false);
+          return showStatus('error', 'Serial-tracked dispatch requires a whole number quantity.');
+        }
+        if (selectedSerialArray.length !== numericQty) {
+          setLoading(false);
+          return showStatus('error', 'Select one serial number per unit before continuing.');
+        }
+      }
+
       let endpoint = '';
       let payload = {
         itemId: parseInt(txForm.itemId, 10),
@@ -1291,12 +1400,18 @@ export default function MobileScanner({
         if (!txForm.lotId) return showStatus('error', 'Source lot required for dispatch');
         endpoint = '/stock/out';
         payload.lotId = parseInt(txForm.lotId, 10);
+        if (requiresSerialSelection) {
+          payload.serialIds = selectedSerialArray;
+        }
       } 
       else if (activeTab === 'stock' && txMode === 'transfer') {
         if (!txForm.lotId || !txForm.destWarehouseId) return showStatus('error', 'Lot and Dest Warehouse required');
         endpoint = '/stock/transfer';
         payload.lotId = parseInt(txForm.lotId, 10);
         payload.destinationWarehouseId = parseInt(txForm.destWarehouseId, 10);
+        if (requiresSerialSelection) {
+          payload.serialIds = selectedSerialArray;
+        }
       }
 
       const response = await api.post(endpoint, payload);
@@ -1304,6 +1419,9 @@ export default function MobileScanner({
       
       resetScanState();
       setSerialGenerationForm({ quantity: 0, generatedSerials: [] });
+      setSelectedSerialIds(new Set());
+      setAvailableSerials([]);
+      setSerialError('');
       setShowSerialModal(false);
       fetchData();
       if (activeTab === 'po') void loadPendingPurchaseOrders();
@@ -1480,9 +1598,11 @@ export default function MobileScanner({
                 )}
 
                 <div className="d-flex flex-column gap-2 pt-3 border-top mt-auto">
-                  <button type="button" onClick={openSerialGenerationModal} disabled={loading || !txForm.itemId || !txForm.warehouseId || !txForm.quantity} className="btn btn-outline-primary erp-btn w-100 fw-bold">
-                    + ASSIGN SERIAL NUMBERS
-                  </button>
+                  {txMode === 'in' && (
+                    <button type="button" onClick={openSerialGenerationModal} disabled={loading || !txForm.itemId || !txForm.warehouseId || !txForm.quantity} className="btn btn-outline-primary erp-btn w-100 fw-bold">
+                      + ASSIGN SERIAL NUMBERS
+                    </button>
+                  )}
                   <button type="button" onClick={handleStockTransaction} disabled={loading || !txForm.itemId || !txForm.warehouseId || !txForm.quantity} className={`btn erp-btn w-100 py-2 fw-bold ${txMode === 'in' ? 'btn-success' : txMode === 'out' ? 'btn-danger' : 'btn-warning text-dark'}`}>
                     {loading ? 'PROCESSING...' : txMode === 'in' ? 'EXECUTE RECEIPT' : txMode === 'out' ? 'EXECUTE DISPATCH' : 'EXECUTE TRANSFER'}
                   </button>
@@ -1490,53 +1610,124 @@ export default function MobileScanner({
               </form>
 
               {currentItem && txMode !== 'in' && (
-                <div className="mt-4 p-4 border rounded bg-light shadow-sm">
-                  <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-                    <div>
-                      <h6 className="erp-section-title mb-1">Bin Location Lot Summary</h6>
-                      <div className="text-muted small">Requested Qty: {requestedQty || 0}</div>
+                <>
+                  <div className="mt-4 p-4 border rounded bg-light shadow-sm">
+                    <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                      <div>
+                        <h6 className="erp-section-title mb-1">Bin Location Lot Summary</h6>
+                        <div className="text-muted small">Requested Qty: {requestedQty || 0}</div>
+                      </div>
+                      {txForm.lotId && <span className="badge bg-primary">Dispatch lot selected</span>}
                     </div>
-                    {txForm.lotId && <span className="badge bg-primary">Dispatch lot selected</span>}
+
+                    {lotsLoading ? (
+                      <div className="text-muted small">Synchronizing lot data...</div>
+                    ) : getAvailableLots().length === 0 ? (
+                      <div className="text-muted small">No active stock units registered for this product/warehouse sequence.</div>
+                    ) : (
+                      <div className="d-flex flex-column gap-2">
+                        {getAvailableLots().map((lot) => {
+                          const quantity = Number(lot.quantity) || 0;
+                          const isSelected = String(txForm.lotId) === String(lot.lotId);
+                          const isAvailable = quantity > 0;
+                          const enoughStock = requestedQty <= 0 || quantity >= requestedQty;
+
+                          return (
+                            <div
+                              key={`${lot.lotId ?? 'lot'}-${lot.lotNumber || 'unknown'}`}
+                              className={`erp-lot-row ${isSelected ? 'border-primary bg-white' : ''}`}
+                            >
+                              <div>
+                                <div className="fw-bold font-monospace text-dark">{lot.lotNumber || 'UNASSIGNED'}</div>
+                                <div
+                                  className="erp-text-muted small"
+                                  style={{ color: !isAvailable ? '#b91c1c' : enoughStock ? '#15803d' : '#b45309' }}
+                                >
+                                  {!isAvailable ? 'Depleted Lot' : enoughStock ? 'Ready for distribution' : 'Insufficient for requested qty'}
+                                </div>
+                              </div>
+                              <div className="text-end">
+                                <div className={`fw-bold fs-5 font-monospace ${isAvailable ? 'text-dark' : 'text-danger'}`}>
+                                  {quantity}
+                                </div>
+                                {isSelected && <span className="badge bg-primary">Selected</span>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
-                  {lotsLoading ? (
-                    <div className="text-muted small">Synchronizing lot data...</div>
-                  ) : getAvailableLots().length === 0 ? (
-                    <div className="text-muted small">No active stock units registered for this product/warehouse sequence.</div>
-                  ) : (
-                    <div className="d-flex flex-column gap-2">
-                      {getAvailableLots().map((lot) => {
-                        const quantity = Number(lot.quantity) || 0;
-                        const isSelected = String(txForm.lotId) === String(lot.lotId);
-                        const isAvailable = quantity > 0;
-                        const enoughStock = requestedQty <= 0 || quantity >= requestedQty;
-
-                        return (
-                          <div
-                            key={`${lot.lotId ?? 'lot'}-${lot.lotNumber || 'unknown'}`}
-                            className={`erp-lot-row ${isSelected ? 'border-primary bg-white' : ''}`}
-                          >
-                            <div>
-                              <div className="fw-bold font-monospace text-dark">{lot.lotNumber || 'UNASSIGNED'}</div>
-                              <div
-                                className="erp-text-muted small"
-                                style={{ color: !isAvailable ? '#b91c1c' : enoughStock ? '#15803d' : '#b45309' }}
-                              >
-                                {!isAvailable ? 'Depleted Lot' : enoughStock ? 'Ready for distribution' : 'Insufficient for requested qty'}
-                              </div>
-                            </div>
-                            <div className="text-end">
-                              <div className={`fw-bold fs-5 font-monospace ${isAvailable ? 'text-dark' : 'text-danger'}`}>
-                                {quantity}
-                              </div>
-                              {isSelected && <span className="badge bg-primary">Selected</span>}
-                            </div>
+                  {requiresSerialSelection && (
+                    <div className="mt-4 p-4 border rounded bg-white shadow-sm">
+                      <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap">
+                        <div className="me-3">
+                          <div className="fw-bold">Serial Selection</div>
+                          <div className="text-muted small">
+                            Scan or choose serials before executing the {txMode.toUpperCase()} transaction.
                           </div>
-                        );
-                      })}
+                        </div>
+                        <div className="d-flex gap-2 align-items-center flex-wrap">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-secondary"
+                            onClick={fetchSerialsForLot}
+                            disabled={serialLoading}
+                          >
+                            {serialLoading ? <span className="spinner-border spinner-border-sm" /> : 'Refresh'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-success"
+                            onClick={autoSelectSerials}
+                            disabled={
+                              serialLoading ||
+                              desiredSerialQty <= 0 ||
+                              availableSerialsForAuto.length < desiredSerialQty
+                            }
+                            title="Auto-select the first available serial numbers for the requested quantity"
+                          >
+                            Auto-select {desiredSerialQty > 0 ? desiredSerialQty : 'serials'}
+                          </button>
+                          <span className="badge bg-info text-dark">
+                            {selectedSerialIds.size}/{desiredSerialQty || 0}
+                          </span>
+                        </div>
+                      </div>
+
+                      {serialError && <div className="text-danger small mb-2">{serialError}</div>}
+                      {serialLoading ? (
+                        <div className="text-center text-muted py-3">Loading serial numbers...</div>
+                      ) : availableSerials.length === 0 ? (
+                        <div className="text-muted small py-3">No serial numbers found for the selected lot.</div>
+                      ) : (
+                        <div className="d-flex flex-column gap-2" style={{ maxHeight: '220px', overflowY: 'auto' }}>
+                          {availableSerials.map((serial) => (
+                            <label key={serial.id} className="d-flex align-items-start gap-2 serial-entry">
+                              <input
+                                type="checkbox"
+                                disabled={String(serial.status || '').toUpperCase() !== 'AVAILABLE'}
+                                checked={selectedSerialIds.has(serial.id)}
+                                onChange={() => toggleSerialSelection(serial.id)}
+                              />
+                              <div className="flex-grow-1">
+                                <div className="fw-bold text-dark">{serial.serialNumber}</div>
+                                <div className="text-muted small">
+                                  {serial.status}
+                                  {serial.purchaseOrderNumber && (
+                                    <span className="d-block">PO: {serial.purchaseOrderNumber}</span>
+                                  )}
+                                </div>
+                              </div>
+                              <span className="text-muted small">{serial.createdDate}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
+                </>
               )}
             </fieldset>
             {!currentItem && <div className="text-center text-muted small mt-3 p-2 border border-dashed rounded">Scan an item to unlock transaction controls.</div>}
@@ -1793,6 +1984,16 @@ export default function MobileScanner({
           border: 1px solid #dbe4ea;
           border-radius: 8px;
           background: #fff;
+        }
+        .serial-entry {
+          border: 1px solid #dbe4ea;
+          border-radius: 8px;
+          padding: 0.75rem 0.85rem;
+          background: #fff;
+          cursor: pointer;
+        }
+        .serial-entry input {
+          margin-top: 0.25rem;
         }
 
         /* Tabs customization */
