@@ -842,6 +842,12 @@ export default function MobileScanner({
   const [availableLots, setAvailableLots] = useState([]);
   const [lotsLoading, setLotsLoading] = useState(false);
 
+  // --- Serial Tracking States ---
+  const [availableSerials, setAvailableSerials] = useState([]);
+  const [serialLoading, setSerialLoading] = useState(false);
+  const [serialError, setSerialError] = useState('');
+  const [selectedSerialIds, setSelectedSerialIds] = useState(new Set());
+
   // --- Serial Generation Modal States ---
   const [showSerialModal, setShowSerialModal] = useState(false);
   const [serialGenerationForm, setSerialGenerationForm] = useState({
@@ -931,10 +937,94 @@ export default function MobileScanner({
     if (availableLots.length > 0 && (txMode === 'out' || txMode === 'transfer')) {
       const validLot = availableLots.find(l => l.quantity > 0);
       if (validLot && !txForm.lotId) {
-        setTxForm(prev => ({ ...prev, lotId: String(validLot.lotId) }));
+        setTxForm(prev => ({ ...prev, lotId: String(validLot.lotId), lotNumber: validLot.lotNumber || prev.lotNumber }));
       }
     }
   }, [availableLots, txMode, txForm.lotId]);
+
+  const selectedItem = useMemo(() => {
+    const matched = items.find((item) => String(item.id) === txForm.itemId);
+    if (matched) {
+      return { ...matched, ...currentItem };
+    }
+    return currentItem || null;
+  }, [currentItem, items, txForm.itemId]);
+
+  const isSerialTracked = Boolean(selectedItem?.serialPrefix);
+  const requiresSerialSelection = isSerialTracked && (txMode === 'out' || txMode === 'transfer');
+  const lotNumberValue = txForm.lotNumber?.trim() || '';
+  const desiredSerialQty = parseInt(txForm.quantity, 10) || 0;
+  const availableSerialsForAuto = useMemo(
+    () => availableSerials.filter((serial) => serial.status === 'AVAILABLE'),
+    [availableSerials]
+  );
+
+  const toggleSerialSelection = useCallback((serialId) => {
+    setSelectedSerialIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(serialId)) next.delete(serialId);
+      else next.add(serialId);
+      return next;
+    });
+  }, []);
+
+  const fetchSerialsForLot = useCallback(async () => {
+    if (!requiresSerialSelection || !txForm.itemId || !txForm.warehouseId || !txForm.lotId) {
+      setAvailableSerials([]);
+      return;
+    }
+
+    const itemId = Number(txForm.itemId);
+    const warehouseId = Number(txForm.warehouseId);
+    const lotId = Number(txForm.lotId);
+
+    if (!Number.isFinite(itemId) || !Number.isFinite(warehouseId) || !Number.isFinite(lotId)) {
+      setAvailableSerials([]);
+      setSerialError('Select a valid item, location and lot before loading serials.');
+      return;
+    }
+
+    setSerialLoading(true);
+    setSerialError('');
+    try {
+      const params = {
+        itemId,
+        warehouseId,
+        lotId,
+        status: 'AVAILABLE'
+      };
+      if (lotNumberValue) params.lotNumber = lotNumberValue;
+      const response = await api.get('/stock/serials', { params });
+      setAvailableSerials(Array.isArray(response.data) ? response.data : []);
+      setSelectedSerialIds(new Set());
+    } catch (error) {
+      console.error('Serial fetch failed', error);
+      setAvailableSerials([]);
+      setSerialError('Unable to load serial numbers for this lot.');
+    } finally {
+      setSerialLoading(false);
+    }
+  }, [requiresSerialSelection, txForm.itemId, txForm.warehouseId, txForm.lotId, lotNumberValue]);
+
+  useEffect(() => {
+    fetchSerialsForLot();
+  }, [fetchSerialsForLot]);
+
+  useEffect(() => {
+    setSelectedSerialIds(new Set());
+  }, [txForm.itemId, txForm.warehouseId, txForm.lotId, txMode, isSerialTracked]);
+
+  const autoSelectSerials = useCallback(() => {
+    if (!requiresSerialSelection) return;
+    if (desiredSerialQty <= 0) return showStatus('error', 'Enter a valid quantity before auto-selecting serials.');
+    if (availableSerialsForAuto.length < desiredSerialQty) {
+      return showStatus('warning', `Only ${availableSerialsForAuto.length} available serials found for ${desiredSerialQty} units.`);
+    }
+    setSelectedSerialIds(
+      new Set(availableSerialsForAuto.slice(0, desiredSerialQty).map((serial) => serial.id))
+    );
+    showStatus('success', `Selected ${desiredSerialQty} serials.`);
+  }, [requiresSerialSelection, availableSerialsForAuto, desiredSerialQty, showStatus]);
 
   // Auto-Filter POs based on Scanned Item
   useEffect(() => {
@@ -1026,8 +1116,8 @@ export default function MobileScanner({
             itemId: String(payload.itemId),
             warehouseId: String(autoWarehouseId),
             quantity: String(nextQty),
-            lotNumber: '', 
-            lotId: ''
+            lotNumber: trimmed === lastScannedBarcode ? prev.lotNumber : '',
+            lotId: trimmed === lastScannedBarcode ? prev.lotId : ''
           };
         });
 
@@ -1039,7 +1129,12 @@ export default function MobileScanner({
           showStatus('success', `Detected: ${payload.itemCode}`);
         }
         
-        onScanDetected({ itemId: payload.itemId, warehouseId: autoWarehouseId });
+        onScanDetected({
+          itemId: payload.itemId,
+          warehouseId: autoWarehouseId,
+          lotId: payload.inventory?.lotId,
+          lotNumber: payload.inventory?.lotNumber
+        });
         stopCamera();
         
         if (allowScanRecording) {
@@ -1195,8 +1290,14 @@ export default function MobileScanner({
         quantity: parseFloat(txForm.quantity),
       };
 
-      // Add Serials if generated
-      if (serialGenerationForm.generatedSerials.length > 0) {
+      const selectedSerialArray = Array.from(selectedSerialIds);
+      if (requiresSerialSelection && selectedSerialArray.length === 0 && serialGenerationForm.generatedSerials.length === 0) {
+        return showStatus('error', 'Select serials before executing this transaction.');
+      }
+
+      if (selectedSerialArray.length > 0) {
+        payload.serialIds = selectedSerialArray;
+      } else if (serialGenerationForm.generatedSerials.length > 0) {
         payload.serialNumbers = serialGenerationForm.generatedSerials.map(s => s.serialNumber);
       }
 
@@ -1231,6 +1332,9 @@ export default function MobileScanner({
       resetScanState();
       setSerialGenerationForm({ quantity: 0, generatedSerials: [] });
       setShowSerialModal(false);
+      setSelectedSerialIds(new Set());
+      setAvailableSerials([]);
+      setSerialError('');
       fetchData();
       if (activeTab === 'po') void loadPendingPurchaseOrders();
       void startCamera();
@@ -1366,7 +1470,14 @@ export default function MobileScanner({
                   ) : (
                     <div className="col-8">
                       <label className="erp-label">Source Lot <span className="text-danger">*</span></label>
-                      <select className="form-select erp-input font-monospace" value={txForm.lotId} onChange={(e) => setTxForm({ ...txForm, lotId: e.target.value })} disabled={lotsLoading}>
+                      <select className="form-select erp-input font-monospace" value={txForm.lotId} onChange={(e) => {
+                        const selectedLot = availableLots.find((lot) => String(lot.lotId) === e.target.value);
+                        setTxForm({
+                          ...txForm,
+                          lotId: e.target.value,
+                          lotNumber: selectedLot?.lotNumber || txForm.lotNumber
+                        });
+                      }} disabled={lotsLoading}>
                         <option value="">{lotsLoading ? 'Loading...' : '-- Select --'}</option>
                         {availableLots.filter(l => l.quantity > 0).map((lot) => (
                           <option key={`${lot.lotId}-${lot.lotNumber}`} value={lot.lotId}>
@@ -1377,6 +1488,50 @@ export default function MobileScanner({
                     </div>
                   )}
                 </div>
+
+                {requiresSerialSelection && (
+                  <div className="row g-2 mb-3 p-3 bg-white border rounded">
+                    <div className="col-12 d-flex flex-column gap-2">
+                      <div className="d-flex justify-content-between align-items-center">
+                        <span className="erp-label m-0">Serial Numbers</span>
+                        <div className="d-flex gap-2">
+                          <button type="button" className="btn btn-sm btn-outline-secondary" onClick={fetchSerialsForLot} disabled={serialLoading || !txForm.lotId || !txForm.itemId}>
+                            Refresh Serials
+                          </button>
+                          <button type="button" className="btn btn-sm btn-outline-primary" onClick={autoSelectSerials} disabled={serialLoading || !txForm.lotId || desiredSerialQty <= 0}>
+                            Auto-select {desiredSerialQty || 'serials'}
+                          </button>
+                        </div>
+                      </div>
+                      {serialError && <div className="alert alert-warning py-2 small mb-2">{serialError}</div>}
+                      {serialLoading ? (
+                        <div className="text-muted small">Loading available serials...</div>
+                      ) : availableSerials.length === 0 ? (
+                        <div className="text-muted small">Choose a lot and refresh serials to select dispatch items.</div>
+                      ) : (
+                        <div className="border rounded" style={{ maxHeight: '180px', overflowY: 'auto' }}>
+                          {availableSerials.map((serial) => {
+                            const serialNumber = serial.serialNumber || serial.serial || serial.SerialNumber || String(serial.id);
+                            return (
+                              <label key={serial.id || serialNumber} className="d-flex align-items-center px-2 py-1 border-bottom mb-0">
+                                <input
+                                  type="checkbox"
+                                  className="form-check-input me-2"
+                                  checked={selectedSerialIds.has(serial.id)}
+                                  onChange={() => toggleSerialSelection(serial.id)}
+                                />
+                                <span className="small">{serialNumber} <span className="text-muted">({serial.status || 'AVAILABLE'})</span></span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <div className="small text-muted">
+                        Selected {selectedSerialIds.size}/{desiredSerialQty || 0} serials.
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {txMode === 'transfer' && (
                   <div className="row g-2 mb-3 p-2 bg-light border rounded">

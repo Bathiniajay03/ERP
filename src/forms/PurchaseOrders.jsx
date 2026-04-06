@@ -56,19 +56,35 @@ export default function PurchaseOrders() {
               warehouseName: po.warehouseName,
               quantity: po.quantity,
               receivedQuantity: po.receivedQuantity,
-              pendingQuantity: po.pendingQuantity,
-              status: po.status
+              pendingQuantity: Math.max(0, Number(po.quantity || 0) - Number(po.receivedQuantity || 0)),
+              status: po.status || 'Pending'
             }];
 
-        const totalQuantity = po.totalQuantity ?? lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
-        const receivedQuantity = po.receivedQuantity ?? lines.reduce((sum, line) => sum + Number(line.receivedQuantity || 0), 0);
+        const normalizedLines = lines.map((line) => {
+          const quantity = Number(line.quantity || 0);
+          const receivedQuantity = Number(line.receivedQuantity || 0);
+          const pendingQuantity = line.pendingQuantity != null
+            ? Number(line.pendingQuantity || 0)
+            : Math.max(0, quantity - receivedQuantity);
+
+          return {
+            ...line,
+            quantity,
+            receivedQuantity,
+            pendingQuantity,
+            status: line.status || (pendingQuantity > 0 ? 'Pending' : 'Received')
+          };
+        });
+
+        const totalQuantity = po.totalQuantity ?? normalizedLines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+        const receivedQuantity = po.receivedQuantity ?? normalizedLines.reduce((sum, line) => sum + Number(line.receivedQuantity || 0), 0);
 
         return {
           ...po,
           totalQuantity,
           receivedQuantity,
           pendingQuantity: po.pendingQuantity ?? (totalQuantity - receivedQuantity),
-          lines
+          lines: normalizedLines
         };
       });
 

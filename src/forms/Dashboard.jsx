@@ -125,6 +125,16 @@ export default function Dashboard() {
           </div>
 
           <div className="col-md-4">
+            <div className="erp-kpi-box" style={{ borderLeftColor: '#1d4ed8' }}>
+              <div className="d-flex justify-content-between align-items-start">
+                <span className="erp-kpi-label">Customer Sales</span>
+                <span className="badge bg-light text-secondary border">Delivered</span>
+              </div>
+              <span className="erp-kpi-value text-info font-monospace mt-1">{formatNumber(sales.customerRevenue)}</span>
+            </div>
+          </div>
+
+          <div className="col-md-4">
             <div className="erp-kpi-box" style={{ borderLeftColor: (inventory.lowStockItems ?? 0) > 0 ? '#dc2626' : '#94a3b8' }}>
               <div className="d-flex justify-content-between align-items-start">
                 <span className="erp-kpi-label">Low Stock Items</span>
@@ -211,6 +221,22 @@ export default function Dashboard() {
                       <div className="erp-meta-label">Payments Received</div>
                       <div className="erp-meta-value fs-4 fw-bold font-monospace text-success">
                         {formatNumber(finance.paymentsReceived)}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="col-sm-6">
+                    <div className="p-3 border rounded bg-light h-100">
+                      <div className="erp-meta-label">Customer Sales (Delivered)</div>
+                      <div className="erp-meta-value fs-4 fw-bold font-monospace text-info">
+                        {formatNumber(finance.customerSales)}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="col-sm-6">
+                    <div className="p-3 border rounded bg-light h-100">
+                      <div className="erp-meta-label">Customer Receivables</div>
+                      <div className="erp-meta-value fs-4 fw-bold font-monospace text-secondary">
+                        {formatNumber(finance.customerReceivables)}
                       </div>
                     </div>
                   </div>

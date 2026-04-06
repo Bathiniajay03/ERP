@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useContext } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { localAIApi } from "../services/localAIApi";
 import { LocalAIContext } from "../context/LocalAIContext";
 
@@ -9,19 +11,30 @@ const LocalAIPage = () => {
   const messagesEndRef = useRef(null);
 
   const supportedCommands = [
-    "Check stock for item ITEM-01",
-    "Show low stock alerts",
-    "Find item with laptop or keyword",
-    "Create new item ITEM-02",
-    "Receive 100 units of ITEM-01 in HYD-EAST lot LOT-01",
+    "Check stock for ITEM01 in MAIN",
+    "Receive 100 units of ITEM01 in MAIN lot LOT-01",
+    "Show pending purchase orders",
+    "Show sales orders with status",
+    "List all customers and their credit limits",
+    "List all vendors",
+    "Suggest purchase orders for low stock items",
+    "List customer returns waiting for approval",
+    "Show unread notifications",
+    "Show robot status",
+    "List lots for ITEM01",
+    "Show serial numbers for ITEM01",
   ];
 
   const quickActions = [
     { text: "Check stock", command: supportedCommands[0] },
-    { text: "Low stock alerts", command: supportedCommands[1] },
-    { text: "Find item", command: supportedCommands[1] },
-    { text: "Create item", command: supportedCommands[3] },
-    { text: "Receive stock", command: supportedCommands[4] },
+    { text: "Receive stock", command: supportedCommands[1] },
+    { text: "Purchase orders", command: supportedCommands[2] },
+    { text: "Sales orders", command: supportedCommands[3] },
+    { text: "Customers", command: supportedCommands[4] },
+    { text: "Vendors", command: supportedCommands[5] },
+    { text: "Reorder AI", command: supportedCommands[6] },
+    { text: "Notifications", command: supportedCommands[8] },
+    { text: "Robot status", command: supportedCommands[9] },
   ];
 
   // --- persist state so navigation doesn't wipe the chat ---
@@ -32,7 +45,7 @@ const LocalAIPage = () => {
         {
           type: "ai",
           content:
-            "👋 Hello Ajay!\n\nI am your ERP AI Copilot. Purpose: I only answer questions and perform actions related to ERP products — inventory, items, warehouses, stock movements, transfers and reports. I will refuse unrelated requests.\n\nYou can manage inventory using natural language. Try:\n• Check stock for ITEM-01\n• Receive 100 units of ITEM-01 into a warehouse\n• Show low stock alerts\n• Create item ITEM-02\n\nExamples you can say: 'Check stock for ITEM-01', 'Receive 100 units', 'Show low stock alerts'",
+            "👋 Hello Ajay!\n\nI am your ERP AI Copilot. I handle inventory, items, warehouses, customers, vendors, sales orders, purchase orders, returns, notifications, robot status, lot/serial tracking, and reports — fully local with ML.NET and no external AI APIs.\n\nTry commands like:\n• Check stock for ITEM01 in MAIN\n• Show pending purchase orders\n• Show sales orders with status\n• List all customers and their credit limits\n• Show unread notifications\n• Show robot status\n\nYou can also say: 'Suggest purchase orders for low stock items', 'List lots for ITEM01', or 'Show serial numbers for ITEM01'.",
           timestamp: new Date(),
         },
       ]);
@@ -72,7 +85,7 @@ const LocalAIPage = () => {
     if (trimmed === "commands" || trimmed === "help") {
       setIsLoading(false);
       const helpText =
-        `Purpose: This assistant only handles ERP product operations — inventory, items, warehouses, stock movements, transfers and reports. I will not process unrelated requests.\n\nI am your built-in AI Assistant! I can understand natural language to help you manage your ERP faster. Here are a few things you can say to me:\n\n**📦 Stock Operations:**\n• 'Check stock for PROD-01'\n• 'Receive 100 boxes of PROD-01 into MAIN'\n• 'Issue 5 units of PROD-01 due to damage'\n• 'Set stock of PROD-01 to 45 in MAIN'\n• 'Show low stock alerts'\n\n**🏷️ Master Data:**\n• 'Create item PROD-02 with description Laptop'\n• 'Create warehouse MAIN-HUB'\n• 'List all items'\n\n**🤖 Advanced Abilities:**\nYou can chain tasks together! Try saying:\n• 'Create item PROD-01 and then receive 100 of them into MAIN'\n\nJust talk to me naturally, and I'll do the rest!`;
+        `Purpose: This assistant handles ERP operations locally using ML.NET — inventory, items, warehouses, customers, vendors, orders, returns, alerts, robots, lots, serial tracking, and reports.\n\nHere are some working commands you can use:\n\n**📦 Inventory & Warehouses**\n• 'Check stock for ITEM01 in MAIN'\n• 'Receive 100 units of ITEM01 in MAIN lot LOT-01'\n• 'Issue 5 units of ITEM01 from MAIN due to damage'\n• 'Set stock of ITEM01 to 45 in MAIN'\n• 'List lots for ITEM01'\n• 'Show serial numbers for ITEM01'\n\n**🏷️ Master Data**\n• 'Create item ITEM10 with description Laptop'\n• 'Create customer Acme Industries with email acme@example.com'\n• 'Create vendor ABC Supplies with email vendor@example.com'\n• 'List all items'\n• 'List all customers and their credit limits'\n• 'List all vendors'\n\n**🧾 Orders, Returns & Alerts**\n• 'Show pending purchase orders'\n• 'Show sales orders with status'\n• 'Suggest purchase orders for low stock items'\n• 'List customer returns waiting for approval'\n• 'Show unread notifications'\n• 'Show robot status'\n\nYou can also chain tasks together naturally, and I'll process them step by step.`;
       setMessages((prev) => [
         ...prev,
         { type: "ai", content: helpText, timestamp: new Date() },
@@ -92,13 +105,18 @@ const LocalAIPage = () => {
       };
 
       setMessages((prev) => [...prev, aiMessage]);
-    } catch {
+    } catch (error) {
+      const backendMessage =
+        error?.response?.data?.message ||
+        "⚠️ Unable to connect to backend. Please ensure the .NET API is running.";
+
       setMessages((prev) => [
         ...prev,
         {
           type: "ai",
-          content:
-            "⚠️ Unable to connect to backend. Please ensure .NET API is running.",
+          content: backendMessage.startsWith("⚠️")
+            ? backendMessage
+            : `⚠️ ${backendMessage}`,
           timestamp: new Date(),
         },
       ]);
@@ -112,6 +130,105 @@ const LocalAIPage = () => {
       e.preventDefault();
       handleSend();
     }
+  };
+
+  const parseStructuredData = (data) => {
+    if (!data) return null;
+
+    if (typeof data === "string") {
+      try {
+        return JSON.parse(data);
+      } catch {
+        return data;
+      }
+    }
+
+    return data;
+  };
+
+  const renderStructuredData = (data) => {
+    const parsed = parseStructuredData(data);
+    if (!parsed) return null;
+
+    if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === "object" && !Array.isArray(parsed[0])) {
+      const columns = Array.from(
+        parsed.reduce((set, row) => {
+          Object.keys(row || {}).forEach((key) => set.add(key));
+          return set;
+        }, new Set())
+      );
+
+      return (
+        <details className="erp-data-card mt-3">
+          <summary className="erp-data-card-title">View structured data</summary>
+          <div className="table-responsive">
+            <table className="table table-sm table-bordered table-striped mb-0 align-middle">
+              <thead className="table-light">
+                <tr>
+                  {columns.map((column) => (
+                    <th key={column}>{column}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {parsed.map((row, rowIndex) => (
+                  <tr key={rowIndex}>
+                    {columns.map((column) => (
+                      <td key={`${rowIndex}-${column}`}>{String(row?.[column] ?? "-")}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      );
+    }
+
+    if (typeof parsed === "object" && !Array.isArray(parsed)) {
+      return (
+        <details className="erp-data-card mt-3">
+          <summary className="erp-data-card-title">View structured data</summary>
+          <div className="table-responsive">
+            <table className="table table-sm table-bordered mb-0 align-middle">
+              <tbody>
+                {Object.entries(parsed).map(([key, value]) => (
+                  <tr key={key}>
+                    <th className="table-light" style={{ width: "35%" }}>{key}</th>
+                    <td>{String(value ?? "-")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      );
+    }
+
+    return (
+      <details className="erp-data-card mt-3">
+        <summary className="erp-data-card-title">View structured data</summary>
+        <div className="p-3 bg-dark text-success font-monospace small overflow-auto">
+          <pre className="m-0" style={{ fontSize: "0.75rem" }}>
+            {String(parsed)}
+          </pre>
+        </div>
+      </details>
+    );
+  };
+
+  const markdownComponents = {
+    p: ({ children }) => <p className="mb-2">{children}</p>,
+    ul: ({ children }) => <ul className="mb-2 ps-3">{children}</ul>,
+    ol: ({ children }) => <ol className="mb-2 ps-3">{children}</ol>,
+    li: ({ children }) => <li className="mb-1">{children}</li>,
+    table: ({ children }) => (
+      <div className="table-responsive erp-markdown-table mb-2">
+        <table className="table table-sm table-bordered table-hover mb-0 align-middle">{children}</table>
+      </div>
+    ),
+    thead: ({ children }) => <thead className="table-light">{children}</thead>,
+    code: ({ children }) => <code className="erp-inline-code">{children}</code>,
   };
 
   return (
@@ -148,17 +265,21 @@ const LocalAIPage = () => {
                   </div>
                 )}
 
-                <div className={`erp-chat-bubble shadow-sm p-3 rounded-3 ${msg.type === "user" ? "user-bubble" : "ai-bubble"}`} style={{ maxWidth: '75%' }}>
-                  <div style={{ whiteSpace: "pre-wrap", lineHeight: '1.5' }}>{msg.content}</div>
-                  
-                  {/* Data Payload Rendering */}
-                  {msg.data && (
-                    <div className="mt-3 p-3 bg-dark text-success rounded-2 font-monospace small overflow-auto">
-                      <pre className="m-0" style={{ fontSize: '0.75rem' }}>
-                        {JSON.stringify(msg.data, null, 2)}
-                      </pre>
+                <div
+                  className={`erp-chat-bubble shadow-sm p-3 rounded-3 ${msg.type === "user" ? "user-bubble" : "ai-bubble"}`}
+                  style={{ maxWidth: msg.type === "user" ? '75%' : '90%' }}
+                >
+                  {msg.type === "ai" ? (
+                    <div className="erp-markdown-content">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                        {msg.content}
+                      </ReactMarkdown>
                     </div>
+                  ) : (
+                    <div style={{ whiteSpace: "pre-wrap", lineHeight: '1.5' }}>{msg.content}</div>
                   )}
+
+                  {msg.data && renderStructuredData(msg.data)}
                   
                   <div className={`mt-2 small ${msg.type === "user" ? "text-white-50 text-end" : "text-muted"}`} style={{ fontSize: '0.65rem' }}>
                     {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -212,7 +333,7 @@ const LocalAIPage = () => {
               <input
                 type="text"
                 className="form-control erp-input shadow-sm py-2"
-                placeholder="Ask the copilot to check inventory, create items, or move stock..."
+                placeholder="Ask about inventory, POs, sales orders, customers, vendors, returns, alerts, or robot tasks..."
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyPress}
@@ -292,6 +413,58 @@ const LocalAIPage = () => {
           color: var(--erp-text-main);
           border: 1px solid var(--erp-border);
           border-bottom-left-radius: 4px !important;
+        }
+        .erp-markdown-content {
+          line-height: 1.5;
+        }
+        .erp-markdown-content p:last-child {
+          margin-bottom: 0;
+        }
+        .erp-markdown-table {
+          border: 1px solid #d9e2ec;
+          border-radius: 8px;
+          overflow: hidden;
+          background: #fff;
+        }
+        .erp-markdown-content table {
+          font-size: 0.82rem;
+        }
+        .erp-markdown-content th,
+        .erp-markdown-content td {
+          vertical-align: middle;
+          padding: 0.5rem 0.65rem;
+        }
+        .erp-markdown-content thead th {
+          background: #f8fafc;
+          color: #0f172a;
+          white-space: nowrap;
+        }
+        .erp-inline-code {
+          background: #eef2ff;
+          color: #1d4ed8;
+          padding: 0.1rem 0.35rem;
+          border-radius: 4px;
+          font-size: 0.82em;
+        }
+        .erp-data-card {
+          border: 1px solid #d9e2ec;
+          border-radius: 8px;
+          background: #f8fbfd;
+          overflow: hidden;
+        }
+        .erp-data-card-title {
+          cursor: pointer;
+          list-style: none;
+          padding: 0.65rem 0.85rem;
+          font-size: 0.72rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          color: #0f4c81;
+          background: #eef6fb;
+          border-bottom: 1px solid #d9e2ec;
+        }
+        .erp-data-card-title::-webkit-details-marker {
+          display: none;
         }
 
         .erp-input {

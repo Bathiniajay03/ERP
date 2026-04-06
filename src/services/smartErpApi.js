@@ -13,13 +13,22 @@ export const smartErpApi = {
     api.post("/smart-erp/auth/verify-mfa", payload),
 
   registerUser: (payload) =>
-    api.post("/smart-erp/auth/register", payload),
+    api.post("/admin/create-user", payload),
 
   logout: (payload) =>
     api.post("/smart-erp/auth/logout", payload),
 
   getUsers: () =>
-    api.get("/smart-erp/auth/users"),
+    api.get("/admin/users"),
+
+  getRiders: () =>
+    api.get("/rider/all"),
+
+  getCurrentAccess: () =>
+    api.get("/admin/me/access"),
+
+  updateUserPermissions: (payload) =>
+    api.post("/admin/update-permissions", payload),
 
   updateUser: (id, payload) =>
     api.put(`/users/${id}`, payload),
@@ -45,12 +54,27 @@ export const smartErpApi = {
     api.post("/smart-erp/products", payload),
 
   receiveInventory: (payload) =>
-    api.post("/smart-erp/inventory/receive", payload),
+    api.post("/stock/in", payload),
+
+  dispatchInventory: (payload) =>
+    api.post("/stock/out", payload),
 
 
   // Orders Workflow
   createOrder: (payload) =>
     api.post("/smart-erp/orders", payload),
+
+  getCustomerOrders: () =>
+    api.get("/public/orders"),
+
+  updateCustomerOrderStatus: (id, payload) =>
+    api.put(`/public/orders/${id}/status`, payload),
+
+  assignDelivery: (payload) =>
+    api.post("/delivery/assign", payload),
+
+  updateDeliveryStatus: (payload) =>
+    api.post("/delivery/update-status", payload),
 
   assignPicking: (orderId) =>
     api.post(`/smart-erp/orders/${orderId}/assign-picking`),

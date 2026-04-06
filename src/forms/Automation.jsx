@@ -316,6 +316,9 @@ export default function Automation() {
   const [warehouses, setWarehouses] = useState([]);
   const [vendors, setVendors] = useState([]);
   const [purchaseOrders, setPurchaseOrders] = useState([]);
+  const [salesOrders, setSalesOrders] = useState([]);
+  const [packers, setPackers] = useState([]);
+  const [riders, setRiders] = useState([]);
   const [result, setResult] = useState('');
   const [warning, setWarning] = useState('');
 
@@ -331,6 +334,9 @@ export default function Automation() {
   const [vendorForm, setVendorForm] = useState({ vendorCode: '', name: '', contactPerson: '', phone: '', email: '' });
   const [receivePoForm, setReceivePoForm] = useState({ poId: '', purchaseOrderLineId: '', quantity: 0, scannerDeviceId: 'PO-SCN-01' });
   const [assignTaskForm, setAssignTaskForm] = useState({ orderId: '' });
+  const [assignOrderForm, setAssignOrderForm] = useState({ orderId: '', packerId: '' });
+  const [assignRiderForm, setAssignRiderForm] = useState({ orderId: '', riderId: '' });
+  const [updatePackerStatusForm, setUpdatePackerStatusForm] = useState({ orderId: '', status: 'Received' });
 
   useEffect(() => {
     loadData();
@@ -344,18 +350,29 @@ export default function Automation() {
 
   const loadData = async () => {
     try {
-      const [h, r, t, i, w, po, v] = await Promise.allSettled([
+      const [h, r, t, i, w, po, v, so, u] = await Promise.allSettled([
         smartErpApi.health(),
         smartErpApi.robotFleet(),
         smartErpApi.robotTasks(),
         smartErpApi.stockItems(),
         smartErpApi.warehouses(),
         smartErpApi.getPurchaseOrders(),
-        smartErpApi.getVendors()
+        smartErpApi.getVendors(),
+        smartErpApi.getSalesOrders(),
+        smartErpApi.getUsers()
       ]);
       if (h.status === 'fulfilled') setHealth(h.value.data);
       if (r.status === 'fulfilled') setRobots(r.value.data || []);
       if (t.status === 'fulfilled') setRobotTasks(t.value.data || []);
+      if (t.status === 'rejected') {
+        const err = t.reason;
+        if (err?.response?.status === 401) {
+          setResult('Robot tasks auth failed. Please login and try again.');
+        } else {
+          const message = err?.customMessage || err?.response?.data?.message || err?.message || 'Robot tasks failed';
+          setResult(`Robot tasks load error: ${message}`);
+        }
+      }
       if (i.status === 'fulfilled') setItems(i.value.data || []);
       if (w.status === 'fulfilled') setWarehouses(w.value.data || []);
       if (v.status === 'fulfilled') setVendors(v.value.data || []);
@@ -388,7 +405,13 @@ export default function Automation() {
       });
 
       setPurchaseOrders(normalizedPo);
-      const hasFailure = [h, r, t, i, w, po, v].some((x) => x.status === 'rejected');
+      if (so.status === 'fulfilled') setSalesOrders(so.value.data || []);
+      if (u.status === 'fulfilled') {
+        const users = u.value.data || [];
+        setPackers(users.filter(user => user.role === 'Packer' || user.role === 'Operator'));
+        setRiders(users.filter(user => user.role === 'Rider' || user.role === 'Robot Supervisor'));
+      }
+      const hasFailure = [h, r, t, i, w, po, v, so, u].some((x) => x.status === 'rejected');
       setWarning(hasFailure ? 'Some automation data failed to load. Showing available data.' : '');
     } catch (err) {
       setResult(err?.response?.data || 'Failed to load automation data');
@@ -545,6 +568,54 @@ export default function Automation() {
     );
   };
 
+  const assignOrderToPacker = (e) => {
+    e.preventDefault();
+    if (!assignOrderForm.orderId || !assignOrderForm.packerId) {
+      setResult('Select order and packer.');
+      return;
+    }
+
+    handleAction(
+      () => smartErpApi.updateSalesOrderStatus(Number(assignOrderForm.orderId), { status: 'Picking', assignedPackerId: Number(assignOrderForm.packerId) }),
+      'Order assigned to packer: ',
+      () => setAssignOrderForm({ orderId: '', packerId: '' })
+    );
+  };
+
+  const updatePackerStatus = (e) => {
+    e.preventDefault();
+    if (!updatePackerStatusForm.orderId) {
+      setResult('Select order to update.');
+      return;
+    }
+
+    const statusMap = {
+      'Received': 'Picking',
+      'Packed': 'Packed',
+      'Bin Placed': 'Packed'
+    };
+
+    handleAction(
+      () => smartErpApi.updateSalesOrderStatus(Number(updatePackerStatusForm.orderId), { status: statusMap[updatePackerStatusForm.status] || 'Picking' }),
+      `Order status updated to ${updatePackerStatusForm.status}: `,
+      () => setUpdatePackerStatusForm({ orderId: '', status: 'Received' })
+    );
+  };
+
+  const assignOrderToRider = (e) => {
+    e.preventDefault();
+    if (!assignRiderForm.orderId || !assignRiderForm.riderId) {
+      setResult('Select order and rider.');
+      return;
+    }
+
+    handleAction(
+      () => smartErpApi.updateSalesOrderStatus(Number(assignRiderForm.orderId), { status: 'Shipped', assignedRiderId: Number(assignRiderForm.riderId) }),
+      'Order assigned to rider: ',
+      () => setAssignRiderForm({ orderId: '', riderId: '' })
+    );
+  };
+
   const sendRobotTaskEvent = (taskId, eventName) => {
     handleAction(
       () => smartErpApi.robotTaskEvent(taskId, { eventName }),
@@ -619,209 +690,14 @@ export default function Automation() {
             </div>
           </div>
 
-          {/* Robot Fleet Table */}
-          <div className="col-md-8 col-xl-9">
-            <div className="erp-panel h-100 d-flex flex-column">
-              <div className="erp-panel-header bg-light">
-                <span className="fw-bold">Robot Fleet Status</span>
-              </div>
-              <div className="erp-table-container flex-grow-1 overflow-auto bg-white">
-                <table className="table erp-table table-hover align-middle mb-0">
-                  <thead className="table-light">
-                    <tr>
-                      <th>Robot Code</th>
-                      <th>Battery Level</th>
-                      <th>Area Location</th>
-                      <th>Current Execution Task</th>
-                      <th className="text-center">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {robots.length === 0 ? (
-                      <tr><td colSpan="5" className="text-center text-muted py-4">No robots registered in fleet.</td></tr>
-                    ) : (
-                      robots.map((r, idx) => (
-                        <tr key={idx}>
-                          <td className="fw-bold font-monospace text-dark">{r.robot}</td>
-                          <td>
-                            <div className="d-flex align-items-center gap-2">
-                              <div className="progress flex-grow-1" style={{ height: '6px', maxWidth: '80px', backgroundColor: '#e2e8f0' }}>
-                                <div className={`progress-bar ${r.batteryLevel < 20 ? 'bg-danger' : 'bg-success'}`} style={{ width: `${r.batteryLevel}%` }}></div>
-                              </div>
-                              <small className="text-muted font-monospace">{r.batteryLevel}%</small>
-                            </div>
-                          </td>
-                          <td className="text-muted">{r.location}</td>
-                          <td className="small text-dark">{r.currentTask}</td>
-                          <td className="text-center">
-                            <span className={`erp-status-tag ${getRobotStatusTag(r.status)}`}>{r.status}</span>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
         </div>
 
-        {/* Task Queue Panel */}
-        <div className="erp-panel shadow-sm mb-4 d-flex flex-column" style={{ maxHeight: '400px' }}>
-          <div className="erp-panel-header d-flex justify-content-between align-items-center bg-light">
-            <span className="fw-bold">Active Robot Task Queue</span>
-            <span className="text-muted small">Auto refresh (5s)</span>
-          </div>
-          <div className="erp-table-container flex-grow-1 overflow-auto bg-white">
-            <table className="table erp-table table-hover align-middle mb-0">
-              <thead className="table-light">
-                <tr>
-                  <th style={{ width: '80px' }}>Task ID</th>
-                  <th>Associated Order</th>
-                  <th>Assigned Robot</th>
-                  <th>Task Type</th>
-                  <th>Status</th>
-                  <th className="text-end" style={{ width: '320px' }}>Workflow Triggers</th>
-                </tr>
-              </thead>
-              <tbody>
-                {robotTasks.length === 0 ? (
-                  <tr><td colSpan="6" className="text-center text-muted py-4">Task queue is currently empty.</td></tr>
-                ) : (
-                  robotTasks.map((t) => (
-                    <tr key={t.id}>
-                      <td className="font-monospace text-muted">{t.id}</td>
-                      <td className="fw-bold text-dark font-monospace">{t.orderNumber || `SO-${t.salesOrderId}`}</td>
-                      <td className="font-monospace">{t.robotCode || 'UNASSIGNED'}</td>
-                      <td>{t.taskType}</td>
-                      <td><span className="erp-status-tag tag-secondary">{t.status}</span></td>
-                      <td className="text-end">
-                        <div className="btn-group shadow-sm">
-                          <button type="button" className="btn btn-sm btn-light border erp-btn" onClick={() => sendRobotTaskEvent(t.id, 'REACHED_SOURCE')}>Rch</button>
-                          <button type="button" className="btn btn-sm btn-light border erp-btn" onClick={() => sendRobotTaskEvent(t.id, 'PICKED')}>Pck</button>
-                          <button type="button" className="btn btn-sm btn-light border erp-btn" onClick={() => sendRobotTaskEvent(t.id, 'DELIVERED')}>Del</button>
-                          <button type="button" className="btn btn-sm btn-dark erp-btn" onClick={() => completeRobotTask(t.id)}>Complete</button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
 
         {/* Lower Grid: Robot Mgmt / IoT / Procurement */}
         <div className="row g-4">
           
-          {/* Left Column: Robot Mgmt & IoT */}
-          <div className="col-lg-6">
-            <div className="erp-panel shadow-sm mb-4">
-              <div className="erp-panel-header bg-light">
-                <span className="fw-bold">Fleet Interventions</span>
-              </div>
-              <div className="p-4 bg-white">
-                <h6 className="erp-section-title mb-3">Register New Unit</h6>
-                <form className="row g-2 mb-4 align-items-end" onSubmit={registerRobot}>
-                  <div className="col-md-4">
-                    <label className="erp-label">Robot Code</label>
-                    <input className="form-control erp-input font-monospace" placeholder="e.g. R-101" value={registerRobotForm.robotCode} onChange={(e) => setRegisterRobotForm({ ...registerRobotForm, robotCode: e.target.value })} required />
-                  </div>
-                  <div className="col-md-4">
-                    <label className="erp-label">Initial Location</label>
-                    <input className="form-control erp-input" placeholder="e.g. A01" value={registerRobotForm.currentLocation} onChange={(e) => setRegisterRobotForm({ ...registerRobotForm, currentLocation: e.target.value })} required />
-                  </div>
-                  <div className="col-md-2">
-                    <label className="erp-label">Battery %</label>
-                    <input type="number" className="form-control erp-input font-monospace" value={registerRobotForm.batteryLevel} onChange={(e) => setRegisterRobotForm({ ...registerRobotForm, batteryLevel: e.target.value })} required />
-                  </div>
-                  <div className="col-md-2">
-                    <button className="btn btn-dark erp-btn w-100">Reg</button>
-                  </div>
-                </form>
-
-                <h6 className="erp-section-title mb-3">Override Unit Status</h6>
-                <form className="row g-2 mb-4 align-items-end" onSubmit={updateRobot}>
-                  <div className="col-md-3">
-                    <label className="erp-label">Robot ID</label>
-                    <input className="form-control erp-input font-monospace" placeholder="ID" value={updateRobotForm.robotId} onChange={(e) => setUpdateRobotForm({ ...updateRobotForm, robotId: e.target.value })} required />
-                  </div>
-                  <div className="col-md-4">
-                    <label className="erp-label">Status Override</label>
-                    <select className="form-select erp-input" value={updateRobotForm.status} onChange={(e) => setUpdateRobotForm({ ...updateRobotForm, status: e.target.value })}>
-                      <option>Idle</option><option>Busy</option><option>Charging</option><option>Maintenance</option>
-                    </select>
-                  </div>
-                  <div className="col-md-3">
-                    <label className="erp-label">Location</label>
-                    <input className="form-control erp-input" placeholder="Loc" value={updateRobotForm.currentLocation} onChange={(e) => setUpdateRobotForm({ ...updateRobotForm, currentLocation: e.target.value })} required />
-                  </div>
-                  <div className="col-md-2">
-                    <button className="btn btn-outline-dark erp-btn w-100">Update</button>
-                  </div>
-                </form>
-
-                <h6 className="erp-section-title mb-3">Manual Task Assignment</h6>
-                <form className="row g-2 align-items-end" onSubmit={assignTaskToRobot}>
-                  <div className="col-md-8">
-                    <label className="erp-label">Sales Order Reference ID</label>
-                    <input type="number" className="form-control erp-input font-monospace" placeholder="Target Order ID" value={assignTaskForm.orderId} onChange={(e) => setAssignTaskForm({ orderId: e.target.value })} required />
-                  </div>
-                  <div className="col-md-4">
-                    <button className="btn btn-warning erp-btn w-100 fw-bold">Dispatch Unit</button>
-                  </div>
-                </form>
-              </div>
-            </div>
-
-            <div className="erp-panel shadow-sm">
-              <div className="erp-panel-header bg-light">
-                <span className="fw-bold">IoT Device Event Emulator</span>
-              </div>
-              <div className="p-4 bg-white">
-                <form className="row g-3" onSubmit={sendDeviceEvent}>
-                  <div className="col-md-4">
-                    <label className="erp-label">Device Type</label>
-                    <select className="form-select erp-input" value={deviceForm.deviceType} onChange={(e) => setDeviceForm({ ...deviceForm, deviceType: e.target.value })}>
-                      <option>RFID</option><option>Scanner</option><option>Robot</option><option>IoT</option>
-                    </select>
-                  </div>
-                  <div className="col-md-4">
-                    <label className="erp-label">Device UUID</label>
-                    <input className="form-control erp-input font-monospace" placeholder="ID" value={deviceForm.deviceId} onChange={(e) => setDeviceForm({ ...deviceForm, deviceId: e.target.value })} required />
-                  </div>
-                  <div className="col-md-4">
-                    <label className="erp-label">Event Hook</label>
-                    <input className="form-control erp-input" placeholder="e.g. Move" value={deviceForm.eventType} onChange={(e) => setDeviceForm({ ...deviceForm, eventType: e.target.value })} required />
-                  </div>
-                  <div className="col-md-6">
-                    <label className="erp-label">Item Context (Opt)</label>
-                    <select className="form-select erp-input" value={deviceForm.itemId} onChange={(e) => setDeviceForm({ ...deviceForm, itemId: e.target.value })}>
-                      <option value="">None</option>
-                      {items.map((i) => <option key={i.id} value={i.id}>{i.itemCode}</option>)}
-                    </select>
-                  </div>
-                  <div className="col-md-6">
-                    <label className="erp-label">Location Context (Opt)</label>
-                    <select className="form-select erp-input" value={deviceForm.warehouseId} onChange={(e) => setDeviceForm({ ...deviceForm, warehouseId: e.target.value })}>
-                      <option value="">None</option>
-                      {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-                    </select>
-                  </div>
-                  <div className="col-md-8">
-                    <label className="erp-label">Raw Payload String</label>
-                    <input className="form-control erp-input font-monospace" placeholder="Data payload" value={deviceForm.payload} onChange={(e) => setDeviceForm({ ...deviceForm, payload: e.target.value })} required />
-                  </div>
-                  <div className="col-md-4 d-flex align-items-end">
-                    <button className="btn btn-primary erp-btn w-100">Inject Event</button>
-                  </div>
-                </form>
-              </div>
-            </div>
-          </div>
-
           {/* Right Column: Procurement & AI */}
-          <div className="col-lg-6">
+          <div className="col-12">
             <div className="erp-panel shadow-sm mb-4">
               <div className="erp-panel-header d-flex justify-content-between align-items-center bg-light">
                 <span className="fw-bold">AI Agent & Manual Procurement</span>

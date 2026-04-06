@@ -44,38 +44,49 @@ export default function Lots() {
     loadDetails();
   }, []);
 
-  // 1. Map raw inventory to rich rows
+  // 1. Map raw inventory to rich rows (only show lots with available quantity > 0)
   const inventoryRows = useMemo(() => {
     const itemsById = new Map(items.map((item) => [item.id, item]));
     const warehousesById = new Map(warehouses.map((warehouse) => [warehouse.id, warehouse]));
 
-    return inventory.map((entry) => {
-      const resolvedItemId = entry.ItemId ?? entry.itemId;
-      const resolvedWarehouseId = entry.WarehouseId ?? entry.warehouseId;
-      const warehouse = warehousesById.get(resolvedWarehouseId);
-      const item = itemsById.get(resolvedItemId);
-      const lotNumber =
-        (entry.lotNumber || entry.LotNumber || entry.lotId || "").trim() === "-" ||
-        !(entry.lotNumber || entry.LotNumber)
-          ? "General Inventory"
-          : entry.lotNumber || entry.LotNumber;
-      const quantity = Number(entry.quantity || entry.Quantity || 0);
-      const storageHint = warehouse?.name || item?.WarehouseLocation || "Main Storage";
+    return inventory
+      .filter((entry) => {
+        const quantity = Number(entry.quantity || entry.Quantity || 0);
+        const reservedQuantity = Number(entry.reservedQuantity || entry.ReservedQuantity || 0);
+        const availableQuantity = quantity - reservedQuantity;
+        return availableQuantity > 0; // Only show lots with available stock
+      })
+      .map((entry) => {
+        const resolvedItemId = entry.ItemId ?? entry.itemId;
+        const resolvedWarehouseId = entry.WarehouseId ?? entry.warehouseId;
+        const warehouse = warehousesById.get(resolvedWarehouseId);
+        const item = itemsById.get(resolvedItemId);
+        const lotNumber =
+          (entry.lotNumber || entry.LotNumber || entry.lotId || "").trim() === "-" ||
+          !(entry.lotNumber || entry.LotNumber)
+            ? "General Inventory"
+            : entry.lotNumber || entry.LotNumber;
+        const quantity = Number(entry.quantity || entry.Quantity || 0);
+        const reservedQuantity = Number(entry.reservedQuantity || entry.ReservedQuantity || 0);
+        const availableQuantity = quantity - reservedQuantity;
+        const storageHint = warehouse?.name || item?.WarehouseLocation || "Main Storage";
 
-      return {
-        id: entry.id ?? entry.Id,
-        lotId: entry.lotId ?? entry.LotId,
-        itemId: resolvedItemId,
-        warehouseId: resolvedWarehouseId,
-        lotNumber,
-        itemCode: item?.itemCode || `Item-${entry.itemId || entry.ItemId}`,
-        itemName: item?.description || "Unknown product",
-        warehouseName: warehouse?.name || `WH-${entry.warehouseId || entry.WarehouseId}`,
-        quantity,
-        storage: storageHint,
-        locationCode: entry.locationCode || entry.LocationCode || item?.WarehouseLocation || "N/A"
-      };
-    });
+        return {
+          id: entry.id ?? entry.Id,
+          lotId: entry.lotId ?? entry.LotId,
+          itemId: resolvedItemId,
+          warehouseId: resolvedWarehouseId,
+          lotNumber,
+          itemCode: item?.itemCode || `Item-${entry.itemId || entry.ItemId}`,
+          itemName: item?.description || "Unknown product",
+          warehouseName: warehouse?.name || `WH-${entry.warehouseId || entry.WarehouseId}`,
+          quantity: availableQuantity, // Show available quantity instead of total
+          totalQuantity: quantity, // Keep total for reference
+          reservedQuantity,
+          storage: storageHint,
+          locationCode: entry.locationCode || entry.LocationCode || item?.WarehouseLocation || "N/A"
+        };
+      });
   }, [inventory, items, warehouses]);
 
   // 2. Group those rows by Product (Item Code)

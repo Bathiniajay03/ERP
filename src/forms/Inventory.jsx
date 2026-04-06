@@ -173,11 +173,23 @@ import { smartErpApi } from "../services/smartErpApi";
 
 export default function Inventory() {
   const [inventory, setInventory] = useState([]);
+  const [warehouses, setWarehouses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState({ text: "", type: "" });
   const [filter, setFilter] = useState("");
   
   const [selectedItem, setSelectedItem] = useState(null);
+  const [movementItem, setMovementItem] = useState(null);
+  const [movementMode, setMovementMode] = useState("IN");
+  const [movementForm, setMovementForm] = useState({
+    warehouseId: "",
+    quantity: 1,
+    lotId: "",
+    lotNumber: "",
+    scannerDeviceId: "INV-01",
+    reason: ""
+  });
 
   useEffect(() => {
     fetchInventory();
@@ -186,8 +198,12 @@ export default function Inventory() {
   const fetchInventory = async () => {
     try {
       setLoading(true);
-      const res = await smartErpApi.stockInventory();
-      setInventory(res.data || []);
+      const [inventoryRes, warehouseRes] = await Promise.all([
+        smartErpApi.stockInventory(),
+        smartErpApi.warehouses()
+      ]);
+      setInventory(inventoryRes.data || []);
+      setWarehouses(warehouseRes.data || []);
       setError("");
     } catch (err) {
       setError("Failed to load inventory");
@@ -238,6 +254,72 @@ export default function Inventory() {
     return groupedInventory.filter(group => group.totalQuantity < group.minStock).length;
   };
 
+  const openMovementDialog = (item, mode) => {
+    const defaultWarehouseId = item?.lots?.[0]?.warehouseId || item?.warehouseId || warehouses?.[0]?.id || "";
+    const defaultLot = item?.lots?.[0] || null;
+
+    setSelectedItem(null);
+    setMovementItem(item);
+    setMovementMode(mode);
+    setMovementForm({
+      warehouseId: defaultWarehouseId ? String(defaultWarehouseId) : "",
+      quantity: 1,
+      lotId: defaultLot?.lotId ? String(defaultLot.lotId) : "",
+      lotNumber: defaultLot?.lotNumber && defaultLot.lotNumber !== "General" ? defaultLot.lotNumber : "",
+      scannerDeviceId: "INV-01",
+      reason: ""
+    });
+  };
+
+  const closeMovementDialog = () => {
+    setMovementItem(null);
+    setMovementMode("IN");
+    setMovementForm({
+      warehouseId: "",
+      quantity: 1,
+      lotId: "",
+      lotNumber: "",
+      scannerDeviceId: "INV-01",
+      reason: ""
+    });
+  };
+
+  const submitStockMovement = async (e) => {
+    e.preventDefault();
+    if (!movementItem) return;
+
+    const payload = {
+      itemId: movementItem.id,
+      itemCode: movementItem.itemCode,
+      warehouseId: Number(movementForm.warehouseId),
+      quantity: Number(movementForm.quantity),
+      lotId: movementForm.lotId ? Number(movementForm.lotId) : null,
+      lotNumber: movementForm.lotNumber?.trim() || null,
+      scannerDeviceId: movementForm.scannerDeviceId?.trim() || null,
+      reason: movementForm.reason?.trim() || ""
+    };
+
+    try {
+      const response = movementMode === "OUT"
+        ? await smartErpApi.dispatchInventory(payload)
+        : await smartErpApi.receiveInventory(payload);
+
+      if (movementMode === "OUT") {
+        setMessage({ text: `Stock removed for ${movementItem.itemCode}`, type: "success" });
+      } else {
+        const lotText = response?.data?.lotNumber ? ` to lot ${response.data.lotNumber}` : "";
+        setMessage({ text: `Stock added${lotText} for ${movementItem.itemCode}`, type: "success" });
+      }
+
+      closeMovementDialog();
+      setSelectedItem(null);
+      await fetchInventory();
+    } catch (err) {
+      const messageText = err?.response?.data?.message || err?.response?.data || "Stock movement failed";
+      setMessage({ text: typeof messageText === "string" ? messageText : JSON.stringify(messageText), type: "danger" });
+    }
+  };
+
   return (
     <div className="erp-app-wrapper min-vh-100 pb-4 pt-3">
       <div className="container-fluid px-4">
@@ -262,6 +344,12 @@ export default function Inventory() {
           <div className="alert erp-alert d-flex justify-content-between align-items-center py-2 mb-4" style={{ backgroundColor: '#fee2e2', color: '#991b1b', border: '1px solid #f87171' }}>
             <span className="fw-semibold">{error}</span>
             <button className="btn-close btn-sm" onClick={() => setError("")}></button>
+          </div>
+        )}
+        {message.text && (
+          <div className={`alert erp-alert d-flex justify-content-between align-items-center py-2 mb-4 alert-${message.type || "info"}`}>
+            <span className="fw-semibold">{message.text}</span>
+            <button className="btn-close btn-sm" onClick={() => setMessage({ text: "", type: "" })}></button>
           </div>
         )}
 
@@ -332,12 +420,13 @@ export default function Inventory() {
                     <th className="text-end">Min</th>
                     <th className="text-end">Max</th>
                     <th className="text-center" style={{ width: '120px' }}>Status</th>
+                    <th className="text-center" style={{ width: '180px' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredInventory.length === 0 ? (
                     <tr>
-                      <td colSpan="10" className="text-center py-5 text-muted">
+                      <td colSpan="11" className="text-center py-5 text-muted">
                         No inventory records found matching your criteria.
                       </td>
                     </tr>
@@ -382,6 +471,30 @@ export default function Inventory() {
                             ) : (
                               <span className="erp-status-tag tag-success">OPTIMAL</span>
                             )}
+                          </td>
+                          <td className="text-center">
+                            <div className="btn-group btn-group-sm">
+                              <button
+                                type="button"
+                                className="btn btn-outline-primary"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openMovementDialog(group, "IN");
+                                }}
+                              >
+                                Stock In
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-outline-dark"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openMovementDialog(group, "OUT");
+                                }}
+                              >
+                                Stock Out
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -465,9 +578,118 @@ export default function Inventory() {
               </div>
 
             </div>
-            <div className="p-3 bg-light border-top text-end">
+            <div className="p-3 bg-light border-top d-flex justify-content-between align-items-center gap-2">
+              <div className="d-flex gap-2">
+                <button className="btn btn-outline-primary erp-btn px-4" onClick={() => openMovementDialog(selectedItem, "IN")}>Stock In</button>
+                <button className="btn btn-outline-dark erp-btn px-4" onClick={() => openMovementDialog(selectedItem, "OUT")}>Stock Out</button>
+              </div>
               <button className="btn btn-secondary erp-btn px-4" onClick={() => setSelectedItem(null)}>Close Window</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {movementItem && (
+        <div className="erp-modal-overlay" onClick={closeMovementDialog}>
+          <div className="erp-dialog erp-dialog-md" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header d-flex justify-content-between align-items-center">
+              <div>
+                <h5 className="m-0 fw-bold">{movementMode === "OUT" ? "Stock Out" : "Stock In"}: {movementItem.itemCode}</h5>
+                <small className="opacity-75">{movementItem.itemName}</small>
+              </div>
+              <button className="btn-close btn-close-white" onClick={closeMovementDialog}></button>
+            </div>
+
+            <form onSubmit={submitStockMovement}>
+              <div className="erp-dialog-body">
+                <div className="row g-3 mb-3">
+                  <div className="col-12">
+                    <label className="erp-label">Warehouse</label>
+                    <select
+                      className="form-select erp-input"
+                      value={movementForm.warehouseId}
+                      onChange={(e) => setMovementForm({ ...movementForm, warehouseId: e.target.value })}
+                      required
+                    >
+                      <option value="">Select warehouse</option>
+                      {warehouses.map((warehouse) => (
+                        <option key={warehouse.id} value={warehouse.id}>
+                          {warehouse.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="col-12 col-md-6">
+                    <label className="erp-label">Quantity</label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      className="form-control erp-input font-monospace"
+                      value={movementForm.quantity}
+                      onChange={(e) => setMovementForm({ ...movementForm, quantity: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="col-12 col-md-6">
+                    <label className="erp-label">Scanner ID</label>
+                    <input
+                      className="form-control erp-input font-monospace"
+                      value={movementForm.scannerDeviceId}
+                      onChange={(e) => setMovementForm({ ...movementForm, scannerDeviceId: e.target.value })}
+                      placeholder="INV-01"
+                    />
+                  </div>
+                  <div className="col-12">
+                    <label className="erp-label">Lot / Batch</label>
+                    <select
+                      className="form-select erp-input mb-2"
+                      value={movementForm.lotId}
+                      onChange={(e) => {
+                        const nextLotId = e.target.value;
+                        const matchedLot = movementItem.lots.find((lot) => String(lot.lotId || "") === nextLotId);
+                        setMovementForm({
+                          ...movementForm,
+                          lotId: nextLotId,
+                          lotNumber: matchedLot?.lotNumber && matchedLot.lotNumber !== "General" ? matchedLot.lotNumber : movementForm.lotNumber
+                        });
+                      }}
+                    >
+                      <option value="">Use lot number below / general stock</option>
+                      {movementItem.lots
+                        .filter((lot, index, arr) => arr.findIndex((entry) => String(entry.lotId || "") === String(lot.lotId || "")) === index)
+                        .map((lot) => (
+                          <option key={`${lot.warehouseId}-${lot.lotId || "general"}`} value={lot.lotId || ""}>
+                            {lot.lotNumber || "General"} {lot.warehouseName ? `(${lot.warehouseName})` : ""}
+                          </option>
+                        ))}
+                    </select>
+                    <input
+                      className="form-control erp-input font-monospace"
+                      placeholder="Type new lot number if needed"
+                      value={movementForm.lotNumber}
+                      onChange={(e) => setMovementForm({ ...movementForm, lotNumber: e.target.value })}
+                    />
+                  </div>
+                  <div className="col-12">
+                    <label className="erp-label">Reason / Notes</label>
+                    <textarea
+                      className="form-control erp-input"
+                      rows="3"
+                      value={movementForm.reason}
+                      onChange={(e) => setMovementForm({ ...movementForm, reason: e.target.value })}
+                      placeholder={movementMode === "OUT" ? "Dispatch reason" : "Receipt notes"}
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="p-3 bg-light border-top text-end d-flex justify-content-end gap-2">
+                <button type="button" className="btn btn-secondary erp-btn px-4" onClick={closeMovementDialog}>Cancel</button>
+                <button type="submit" className={`btn erp-btn px-4 ${movementMode === "OUT" ? "btn-dark" : "btn-primary"}`}>
+                  {movementMode === "OUT" ? "Post Stock Out" : "Post Stock In"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
