@@ -1,7 +1,8 @@
 import axios from 'axios';
 
 // Simple API client configuration
-const localBaseURL = 'http://localhost:5157/api';
+// const localBaseURL = 'http://localhost:5157/api';
+const localBaseURL = 'https://intermetameric-codi-unexasperating.ngrok-free.dev/api';
 const envBaseURL = (process.env.REACT_APP_API_BASE_URL || '').trim();
 const isBrowser = typeof window !== 'undefined';
 const isLocalHost =
